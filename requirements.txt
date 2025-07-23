@@ -1,6 +1,6 @@
 streamlit
 pandas
 openai>=1.0.0
-matplotlib
 pydeck
-streamlit-authenticator
+matplotlib
+streamlit-authenticator==0.2.3
