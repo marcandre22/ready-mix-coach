@@ -11,7 +11,7 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Load and show CDWARE logo
 logo = Image.open("cdware_logo.png")
-st.sidebar.image(logo, use_column_width=True)
+st.sidebar.image(logo, use_container_width=True)
 
 # Page configuration and CDWARE styling
 st.set_page_config(page_title="CDWARE Coach – Ready-Mix", page_icon="🧱", layout="wide")
