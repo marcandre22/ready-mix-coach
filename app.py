@@ -1,16 +1,48 @@
-# Streamlit Web App: Ready-Mix Dispatch Coaching Agent
+# Streamlit Web App: CDWARE Coach – Ready-Mix
 # Run with: streamlit run app.py
 
 import streamlit as st
 import openai
 import json
+from PIL import Image
 
 # Set your OpenAI API key securely
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-st.set_page_config(page_title="Ready-Mix Coach", layout="wide")
-st.title("🚚 Ready-Mix Dispatch Coach")
-st.markdown("Helps dispatchers make smarter decisions with data-driven coaching.")
+# Load and show CDWARE logo
+logo = Image.open("cdware_logo.png")
+st.sidebar.image(logo, use_column_width=True)
+
+# Page configuration and CDWARE styling
+st.set_page_config(page_title="CDWARE Coach – Ready-Mix", page_icon="🧱", layout="wide")
+
+# --- Custom styling with CDWARE brand colors ---
+st.markdown(
+    """
+    <style>
+        .main {
+            background-color: #FFF9EF;
+        }
+        h1, h2, h3, .stMarkdown h1 {
+            color: #0F311C;
+        }
+        .stButton button {
+            background-color: #E7662E;
+            color: white;
+            font-weight: bold;
+        }
+        .stButton button:hover {
+            background-color: #cc541b;
+            color: white;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# --- App Header ---
+st.markdown("## 🧠 CDWARE Coach – Ready-Mix")
+st.markdown("*Your smart assistant for optimizing fleet performance and operational insights.*")
 
 # --- Input form ---
 st.sidebar.header("Simulated Data Input")
@@ -65,3 +97,7 @@ if st.button("💡 Generate Recommendations"):
 # --- Display raw input for debug/testing ---
 with st.expander("🔍 Show Simulated Data"):
     st.json(input_data)
+
+# --- CDWARE Footer ---
+st.markdown("---")
+st.markdown("© 2025 CDWARE Technologies Inc. | Contact: support@cdware.com")
