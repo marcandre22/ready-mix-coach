@@ -3,4 +3,4 @@ pandas
 openai>=1.0.0
 pydeck
 matplotlib
-streamlit-authenticator==0.2.3
+xlsxwriter
