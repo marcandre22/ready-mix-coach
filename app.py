@@ -6,7 +6,7 @@ import openai
 import json
 
 # Set your OpenAI API key securely
-client = openai.Client(api_key=st.secrets["OPENAI_API_KEY"])
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 st.set_page_config(page_title="Ready-Mix Coach", layout="wide")
 st.title("🚚 Ready-Mix Dispatch Coach")
@@ -49,7 +49,7 @@ user_prompt = f"Analyze the following data and give recommendations to improve f
 if st.button("💡 Generate Recommendations"):
     try:
         with st.spinner("Thinking like a dispatch coach..."):
-            response = client.chat.completions.create(
+            response = openai.chat.completions.create(
                 model="gpt-4",
                 messages=[
                     {"role": "system", "content": system_prompt},
