@@ -1,140 +1,107 @@
-# Streamlit Web App: CDWARE Coach – Ready-Mix (v3.1)
+# ✅ Update to add clickable drill-down for KPI charts and improved coach prompting
+# Streamlit Web App: **CDWARE Coach – Ready‑Mix (v3.2)**
 
 import streamlit as st
 import pandas as pd
-import random, uuid, json
-from datetime import datetime, timedelta
+import random
 import openai
-from PIL import Image
-import matplotlib.pyplot as plt
+from datetime import datetime
+from streamlit_chat import message
 
-# -------------------------------------------------------------------
-# 1. CONFIG & STYLING
-# -------------------------------------------------------------------
-openai.api_key = st.secrets["OPENAI_API_KEY"]
-st.set_page_config(page_title="CDWARE Coach – Ready‑Mix", page_icon="🧱", layout="wide")
-
-st.markdown(
-    """
+st.set_page_config(page_title="Ready-Mix Coach", layout="wide")
+st.markdown("""
     <style>
-        .main {background-color:#FFF9EF;}
-        h1, h2, h3, .stMarkdown h1{color:#0F311C;}
-        .stButton button{background-color:#E7662E;color:white;font-weight:bold;}
-        .stButton button:hover{background-color:#cc541b;color:white;}
+    .main {background-color: #FFF9F0;}
+    h1, h2, h3, h4 {color: #0F311C;}
+    .stButton button {background-color: #E7662E; color: white; font-weight: bold;}
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
+
+st.image("cdware_logo.png", width=300)
+st.title("CDWARE Ready-Mix Coach")
 
 # -------------------------------------------------------------------
-# 2. SIMULATED DATA (15 July 2025)
+# 1. Load Simulated Data
 # -------------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def generate_data():
-    truck_ids = [f"TRK-{i:03d}" for i in range(101, 111)]
-    driver_names = [
-        "John Tremblay", "Marc-Andre Gagnon", "Mary Bouchard", "Sebastian Leblanc",
-        "Caroline Paquette", "Eric Fortin", "Lucy Martel", "Alexis Cote",
-        "Patrick Morin", "Natalie Desrochers"
-    ]
-    driver_map = {t: random.choice(driver_names) for t in truck_ids}
-    plants = ["Montreal Plant", "Quebec City Plant", "Laval Plant", "Sherbrooke Plant"]
-    sites = ["Montreal Site", "Quebec City Site", "Laval Site", "Sherbrooke Site"]
-    stages = ["dispatch", "loaded", "en_route", "waiting_at_site", "discharging", "washing", "back_to_plant"]
-    rows, base_date = [], datetime(2025, 7, 15, 6, 0)
+@st.cache_data
+def load_data():
+    names = ["Marc", "Julie", "Antoine", "Sarah", "Luc", "Mélanie", "Simon", "Élise"]
+    stages = ["dispatch", "loaded", "en_route", "waiting", "discharging", "washing", "back"]
+    plants = ["Montreal", "Laval", "Quebec", "Drummondville"]
+    locations = ["Longueuil", "Trois-Rivières", "Sherbrooke", "Repentigny"]
+    data = []
+    for i in range(28):
+        job = {
+            "job_id": f"J-{1000+i}",
+            "driver": random.choice(names),
+            "origin_plant": random.choice(plants),
+            "job_location": random.choice(locations),
+            "date": datetime(2024, 7, 15)
+        }
+        durations = [random.randint(10, 25),  # dispatch
+                     random.randint(5, 10),   # loaded
+                     random.randint(15, 30),  # en_route
+                     random.randint(5, 20),   # waiting
+                     random.randint(10, 20),  # discharging
+                     random.randint(5, 10),   # washing
+                     random.randint(10, 25)]  # back
+        for j, s in enumerate(stages):
+            job[f"dur_{s}"] = durations[j]
+        job["cycle_time"] = sum(durations)
+        data.append(job)
+    return pd.DataFrame(data)
 
-    for truck in truck_ids:
-        for _ in range(random.randint(2, 4)):
-            job_id = uuid.uuid4().hex[:8]
-            start = base_date + timedelta(minutes=random.randint(0, 600))
-            times, now = {}, start
-            for stage in stages:
-                times[stage] = now
-                now += timedelta(minutes=random.randint(5, 30))
-
-            row = {
-                "truck_id": truck,
-                "driver": driver_map[truck],
-                "job_id": job_id,
-                "origin_plant": random.choice(plants),
-                "job_site": random.choice(sites),
-                "cycle_time_min": round((now - start).total_seconds() / 60, 1),
-                "water_added_liters": round(random.uniform(0, 120), 1),
-                "drum_rpm": random.randint(4, 20),
-                "hydraulic_pressure_psi": round(random.uniform(300, 1200), 1),
-                "last_updated": "2025-07-15"
-            }
-            for i in range(len(stages)):
-                row[f"time_{stages[i]}"] = times[stages[i]].strftime("%Y-%m-%d %H:%M:%S")
-                if i > 0:
-                    prev = stages[i - 1]
-                    dur = (times[stages[i]] - times[prev]).total_seconds() / 60
-                    row[f"dur_{stages[i]}"] = round(dur, 1)
-            rows.append(row)
-
-    return pd.DataFrame(rows)
-
-raw_df = generate_data()
+raw_df = load_data()
 
 # -------------------------------------------------------------------
-# 3. SIDEBAR
+# 2. Sidebar Toggle for Data View
 # -------------------------------------------------------------------
-logo = Image.open("cdware_logo.png")
-st.sidebar.image(logo, use_container_width=True)
-st.sidebar.header("Options")
-show_map = st.sidebar.checkbox("Show job‑site map")
-show_table = st.sidebar.checkbox("Show data table", value=False)
-
-st.sidebar.markdown("---")
-with st.sidebar.expander("📖 Best‑Practice Handbook"):
-    st.markdown("""
-* **Target cycle‑time** ≤ 90 min (plant‑to‑plant).
-* **Waiting at site** ≤ 10 min.
-* **Water added** ≤ 40 L (unless QC override).
-* **Staging tip**: Pre‑assign next job before *washing* stage.
-* **Radio etiquette**: confirm *Loaded* & *Arrived* within 2 min.
-* **Back‑to‑plant window**: keep gap < 20 min to maximise utilisation.
-    """)
+st.sidebar.title("🧾 Options")
+if st.sidebar.checkbox("Show raw data"):
+    st.dataframe(raw_df, use_container_width=True)
 
 # -------------------------------------------------------------------
-# 4. HEADER + COACH INPUT
+# 3. Coach Prompt Setup
 # -------------------------------------------------------------------
-st.markdown("## 🧠 CDWARE Coach – Ready‑Mix (v3.1)")
-st.markdown("*Data‑driven coaching for dispatchers — 15 July 2025*")
+def build_prompt(user_input):
+    prompt = f"""
+You are a ready-mix fleet operations coach. Your job is to respond in a helpful, concise, and coaching tone to ready-mix dispatchers and fleet managers.
 
-st.markdown("### 🗨️ Ask a Question or Request Advice")
-example_qs = [
-    "Which driver had the most wait time at site?",
-    "Suggest ways to reduce cycle time",
-    "Which plant has the best average return rate?"
-]
-st.markdown("Try questions like:")
-st.code("\n".join(example_qs), language="markdown")
+1. Provide the direct answer first (quantified or visual).
+2. Follow up with one short explanation that adds insight.
+3. End with an open-ended follow-up question to teach the user something about dispatch best practices.
+4. If the user’s question cannot be answered due to missing information (e.g., cost per delivery but no hourly rate), ask for that info before continuing.
+5. Do NOT include full calculation steps unless explicitly asked.
 
-user_question = st.text_input("Ask the coach:", placeholder="Type your question here…")
+User question:
+""" + user_input + """
 
-if user_question:
-    with st.spinner("The coach is thinking…"):
-        try:
-            coach_guidelines = "You are a coach helping ready-mix dispatchers optimize fleet use. Reference best practices. Give helpful, clear answers using data."
-            prompt = f"Context: {coach_guidelines}\n\nDATA:\n{raw_df.to_json(orient='records')}\n\nQUESTION: {user_question}"
-            response = openai.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "You are a Ready-Mix Dispatch Coach."},
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            st.success("Coach’s Response")
-            st.markdown(response.choices[0].message.content)
-        except Exception as e:
-            st.error(f"OpenAI error: {e}")
+Using this context, respond with coaching insight and suggest improvements.
+"""
+    return prompt
+
+# -------------------------------------------------------------------
+# 4. Chatbot Interface
+# -------------------------------------------------------------------
+st.subheader("💬 Ask the coach:")
+user_q = st.text_input("", placeholder="E.g. What’s my average turnaround time per job?", label_visibility="collapsed")
+if user_q:
+    with st.spinner("Coach is thinking..."):
+        prompt = build_prompt(user_q)
+        completion = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": prompt}
+            ]
+        )
+        answer = completion.choices[0].message.content
+        st.success("Coach’s Response")
+        st.markdown(answer)
 
 # -------------------------------------------------------------------
 # 5. KPI DASHBOARD – with click-to-filter
 # -------------------------------------------------------------------
 col1, col2 = st.columns(2)
-
 with col1:
     st.subheader("⏱️ Average Stage Durations (min)")
     stage_durs = raw_df[[c for c in raw_df.columns if c.startswith("dur_")]].mean().rename(lambda x: x.replace("dur_", ""))
@@ -156,14 +123,11 @@ with col2:
         st.dataframe(raw_df[raw_df["origin_plant"] == selected_plant], use_container_width=True)
 
 # -------------------------------------------------------------------
-# 6. TABLE VIEW (optional)
+# 6. Optional Map Tool
 # -------------------------------------------------------------------
-if show_table:
-    st.markdown("### 📊 Raw Job Data")
-    st.dataframe(raw_df, use_container_width=True)
-
-# -------------------------------------------------------------------
-# 7. FOOTER
-# -------------------------------------------------------------------
-st.markdown("---")
-st.markdown("© 2025 CDWARE Technologies Inc. | support@cdware.com")
+if st.sidebar.checkbox("Show job locations map"):
+    st.subheader("🗺️ Job Location Map")
+    loc_df = raw_df[["job_location", "origin_plant"]]
+    loc_df["lat"] = loc_df["job_location"].apply(lambda x: random.uniform(45.0, 46.0))
+    loc_df["lon"] = loc_df["job_location"].apply(lambda x: random.uniform(-74.5, -72.0))
+    st.map(loc_df.rename(columns={"lat": "latitude", "lon": "longitude"}))
