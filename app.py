@@ -79,8 +79,20 @@ if st.sidebar.button("📥 Export to CSV / Exporter en CSV"):
 # 2. Coach Prompt Setup
 # -------------------------------------------------------------------
 def build_prompt(user_input):
+    avg_stage_times = raw_df[[col for col in raw_df.columns if col.startswith("dur_")]].mean().to_dict()
+    summary = "\n".join([f"- Average {k.replace('dur_', '').capitalize()} time: {v:.1f} min" for k, v in avg_stage_times.items()])
+    num_jobs = len(raw_df)
+    avg_total = raw_df["cycle_time"].mean()
+
     prompt = f"""
 You are a ready-mix fleet operations coach. Your job is to respond in a helpful, concise, and coaching tone to ready-mix dispatchers and fleet managers.
+
+They use a telematics and delivery tracking solution like CDWARE’s to monitor all stages of a delivery (dispatch, load, en route, waiting, discharging, washing, return). Your answers must reflect that context.
+
+Context summary of current data:
+- Number of deliveries: {num_jobs}
+- Average total delivery time: {avg_total:.1f} min
+{summary}
 
 1. Provide the direct answer first (quantified or visual).
 2. Follow up with one short explanation that adds insight.
@@ -89,7 +101,7 @@ You are a ready-mix fleet operations coach. Your job is to respond in a helpful,
 5. Do NOT include full calculation steps unless explicitly asked.
 
 User question:
-""" + user_input + """
+{user_input}
 
 Using this context, respond with coaching insight and suggest improvements.
 """
