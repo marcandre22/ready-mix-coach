@@ -1,5 +1,5 @@
-# ✅ Update to add clickable drill-down for KPI charts and improved coach prompting
-# Streamlit Web App: **CDWARE Coach – Ready‑Mix (v3.5)** with export, benchmarking, anomaly detection
+# Ready‑Mix Coach – CDWARE (v3.8)
+# English‑only. Coach leverages internal best‑practice principles (crafted from industry literature).
 
 import streamlit as st
 import pandas as pd
@@ -8,161 +8,124 @@ from openai import OpenAI
 from datetime import datetime
 from io import BytesIO
 
-st.set_page_config(page_title="Ready-Mix Coach", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Ready‑Mix Coach", layout="wide", initial_sidebar_state="expanded")
 
 # -------------------------------------------------------------------
-# Brand Styling: CDWARE Dark Mode + Bilingual
+# Brand Styling (dark mode)
 # -------------------------------------------------------------------
-st.markdown("""
+st.markdown(
+    """
     <style>
-    body { background-color: #121212; color: #f1f1f1; }
-    .main { background-color: #121212; }
-    h1, h2, h3, h4 { color: #E7662E; }
-    .stButton button { background-color: #E7662E; color: white; font-weight: bold; }
-    .css-1rs6os.edgvbvh3 { color: #FFFFFF; }
+        body { background-color:#121212; color:#f1f1f1; }
+        .main { background-color:#121212; }
+        h1, h2, h3 { color:#E7662E; }
+        .stButton button { background-color:#E7662E; color:white; font-weight:bold; }
     </style>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
-st.image("cdware_logo.png", width=300)
-st.title("CDWARE Ready-Mix Coach / Coach Béton Prêt-à-l'emploi")
+st.image("cdware_logo.png", width=280)
+st.title("CDWARE Ready‑Mix Coach")
 
 # -------------------------------------------------------------------
-# 1. Load Simulated Data
+# 0. Embedded Best‑Practice Cheat‑Sheet (derived from trusted industry guides)
+# -------------------------------------------------------------------
+BEST_PRACTICE_NOTES = """
+Key ready‑mix dispatch practices:
+• Plan each pour in detail; confirm mix, volume, and site readiness ahead of truck loading.
+• Keep average loading dwell ≤ 7 min to avoid plant congestion.
+• Provide automatic ETA updates to the site at 50 % and 90 % of travel.
+• Escalate if on‑site waiting exceeds 10 min — aim for trucks to be ready to discharge immediately.
+• Track water additions and drum RPM to maintain quality on the road (RPM ≥ 4).
+• Close the loop post‑wash: update KPIs the same day to inform morning stand‑up.
+"""
+
+# -------------------------------------------------------------------
+# 1. Load Simulated Telematics Data
 # -------------------------------------------------------------------
 @st.cache_data
+
 def load_data():
-    names = ["Marc", "Julie", "Antoine", "Sarah", "Luc", "Mélanie", "Simon", "Élise"]
-    stages = ["dispatch", "loaded", "en_route", "waiting", "discharging", "washing", "back"]
-    plants = ["Montreal", "Laval", "Quebec", "Drummondville"]
-    locations = ["Longueuil", "Trois-Rivières", "Sherbrooke", "Repentigny"]
-    data = []
+    drivers = ["Marc", "Julie", "Antoine", "Sarah", "Luc", "Melanie", "Simon", "Elise"]
+    stages  = ["dispatch", "loaded", "en_route", "waiting", "discharging", "washing", "back"]
+    plants  = ["Montreal", "Laval", "Quebec", "Drummondville"]
+    sites   = ["Longueuil", "Trois‑Rivieres", "Sherbrooke", "Repentigny"]
+    rows = []
     for i in range(28):
-        job = {
-            "job_id": f"J-{1000+i}",
-            "driver": random.choice(names),
+        durs = [random.randint(10,25), random.randint(5,10), random.randint(15,30),
+                random.randint(5,20), random.randint(10,20), random.randint(5,10), random.randint(10,25)]
+        row = {
+            "job_id": f"J{1000+i}",
+            "driver": random.choice(drivers),
             "origin_plant": random.choice(plants),
-            "job_location": random.choice(locations),
-            "date": datetime(2024, 7, 15)
+            "job_site": random.choice(sites),
+            "cycle_time": sum(durs)
         }
-        durations = [random.randint(10, 25), random.randint(5, 10), random.randint(15, 30),
-                     random.randint(5, 20), random.randint(10, 20), random.randint(5, 10), random.randint(10, 25)]
-        for j, s in enumerate(stages):
-            job[f"dur_{s}"] = durations[j]
-        job["cycle_time"] = sum(durations)
-        data.append(job)
-    return pd.DataFrame(data)
+        for s,v in zip(stages,durs):
+            row[f"dur_{s}"] = v
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 raw_df = load_data()
 
-# Sidebar Options
-st.sidebar.title("🧾 Options / Options")
-if st.sidebar.checkbox("Show raw data / Afficher les données brutes"):
+# -------------------------------------------------------------------
+# Sidebar – Data & Export
+# -------------------------------------------------------------------
+st.sidebar.header("Data & Export")
+if st.sidebar.checkbox("Show raw data"):
     st.dataframe(raw_df, use_container_width=True)
 
-if st.sidebar.checkbox("Show job locations map / Afficher la carte des chantiers"):
-    st.subheader("🗺️ Job Location Map / Carte des sites")
-    loc_df = raw_df[["job_location", "origin_plant"]]
-    loc_df["lat"] = loc_df["job_location"].apply(lambda x: random.uniform(45.0, 46.0))
-    loc_df["lon"] = loc_df["job_location"].apply(lambda x: random.uniform(-74.5, -72.0))
-    st.map(loc_df.rename(columns={"lat": "latitude", "lon": "longitude"}))
-
-st.sidebar.markdown("### 📤 Export Tools / Outils d'export")
-if st.sidebar.button("📥 Export to Excel / Exporter en Excel"):
-    excel_data = BytesIO()
-    raw_df.to_excel(excel_data, index=False)
-    st.sidebar.download_button("Download Excel", data=excel_data.getvalue(), file_name="ready_mix_data.xlsx")
-
-if st.sidebar.button("📥 Export to CSV / Exporter en CSV"):
-    st.sidebar.download_button("Download CSV", data=raw_df.to_csv(index=False), file_name="ready_mix_data.csv")
+if st.sidebar.button("Export CSV"):
+    st.sidebar.download_button("Download", raw_df.to_csv(index=False), "ready_mix.csv")
 
 # -------------------------------------------------------------------
-# 2. Coach Prompt Setup
+# 2. Prompt Builder with data + best practices
 # -------------------------------------------------------------------
-def build_prompt(user_input):
-    avg_stage_times = raw_df[[col for col in raw_df.columns if col.startswith("dur_")]].mean().to_dict()
-    summary = "\n".join([f"- Average {k.replace('dur_', '').capitalize()} time: {v:.1f} min" for k, v in avg_stage_times.items()])
-    num_jobs = len(raw_df)
-    avg_total = raw_df["cycle_time"].mean()
 
+def build_prompt(question: str) -> str:
+    stage_avgs = raw_df.filter(like="dur_").mean()
+    snapshot  = "\n".join([f"- Avg {c.replace('dur_','').capitalize()}: {v:.1f} min" for c,v in stage_avgs.items()])
     prompt = f"""
-You are a ready-mix fleet operations coach. Your job is to respond in a helpful, concise, and coaching tone to ready-mix dispatchers and fleet managers.
+You are a ready‑mix dispatch coach.
+Leverage both the live telematics summary and the internal best‑practice notes below to answer.
 
-They use a telematics and delivery tracking solution like CDWARE’s to monitor all stages of a delivery (dispatch, load, en route, waiting, discharging, washing, return). Your answers must reflect that context.
+---
+Fleet snapshot
+Jobs: {len(raw_df)} | Avg total cycle: {raw_df['cycle_time'].mean():.1f} min
+{snapshot}
+---
+Best‑practice notes (for internal reasoning, not for quoting):
+{BEST_PRACTICE_NOTES}
+---
+Guidelines for your answer:
+1. Start with the quantified answer.
+2. Add one concise coaching insight.
+3. Finish with an open follow‑up question.
+4. If info is missing, ask for it.
 
-Context summary of current data:
-- Number of deliveries: {num_jobs}
-- Average total delivery time: {avg_total:.1f} min
-{summary}
-
-1. Provide the direct answer first (quantified or visual).
-2. Follow up with one short explanation that adds insight.
-3. End with an open-ended follow-up question to teach the user something about dispatch best practices.
-4. If the user’s question cannot be answered due to missing information (e.g., cost per delivery but no hourly rate), ask for that info before continuing.
-5. Do NOT include full calculation steps unless explicitly asked.
-
-User question:
-{user_input}
-
-Using this context, respond with coaching insight and suggest improvements.
+User question: {question}
 """
     return prompt
 
 # -------------------------------------------------------------------
-# 3. Chatbot Interface
+# 3. Chat Interface
 # -------------------------------------------------------------------
-st.subheader("💬 Ask the coach / Posez votre question au coach:")
-with st.expander("💡 Sample Questions / Questions suggérées"):
-    st.markdown("""
-- What is my average turnaround per job? / Quel est mon délai moyen par livraison?
-- What is the cost per delivery? / Quel est le coût par livraison?
-- Which driver is the most efficient? / Quel chauffeur est le plus efficace?
-- Where do I lose time most often? / Où est-ce que je perds le plus de temps?
-- Can I optimize my dispatching schedule? / Puis-je optimiser ma planification?
-- Compare my plants / Comparer mes usines
-- Who needs coaching? / Qui a besoin de coaching?
-""")
-
-user_q = st.text_input("", placeholder="E.g. What’s my average turnaround time per job? / Quel est mon délai moyen?", label_visibility="collapsed")
-if user_q:
-    with st.spinner("Coach is thinking / Le coach réfléchit..."):
-        prompt = build_prompt(user_q)
+question = st.text_input("Ask the coach:")
+if question:
+    with st.spinner("Coach is thinking …"):
+        prompt = build_prompt(question)
         client = OpenAI()
-        completion = client.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "system", "content": prompt}]
+        rsp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role":"system","content":prompt}]
         )
-        answer = completion.choices[0].message.content
-        st.success("Coach’s Response / Réponse du coach")
-        st.markdown(answer)
+        st.success("Coach says:")
+        st.markdown(rsp.choices[0].message.content)
 
 # -------------------------------------------------------------------
-# 4. Optional Analysis Button
+# 4. Optional Insights Button
 # -------------------------------------------------------------------
-if st.button("📈 Show Anomaly Detection & Driver Performance"):
-    st.subheader("🔍 Outlier Detection / Détection d'anomalies")
-    avg_cycle = raw_df["cycle_time"].mean()
-    std_cycle = raw_df["cycle_time"].std()
-    outliers = raw_df[raw_df["cycle_time"] > avg_cycle + std_cycle]
-    if not outliers.empty:
-        st.warning(f"Found {len(outliers)} jobs with unusually long cycle times.")
-        st.dataframe(outliers)
-    else:
-        st.success("No significant outliers detected.")
-
-    st.subheader("🏁 Driver Performance Summary / Sommaire des chauffeurs")
-    perf_df = raw_df.groupby("driver")["cycle_time"].mean().sort_values()
-    st.bar_chart(perf_df)
-
-# -------------------------------------------------------------------
-# 5. Minimalist Benchmarking (No fla fla)
-# -------------------------------------------------------------------
-st.subheader("📊 Benchmarking Insights / Sommaire de performance")
-col1, col2 = st.columns(2)
-with col1:
-    st.metric("⏱️ Avg. Turnaround (min)", f"{raw_df['cycle_time'].mean():.1f}")
-    st.metric("👥 Drivers", raw_df['driver'].nunique())
-with col2:
-    best_driver = raw_df.groupby("driver")["cycle_time"].mean().idxmin()
-    st.metric("🏆 Best Avg. Driver", best_driver)
-    worst_driver = raw_df.groupby("driver")["cycle_time"].mean().idxmax()
-    st.metric("⚠️ Slowest Avg. Driver", worst_driver)
+if st.button("📈 Anomalies & Driver Performance"):
+    st.subheader("Driver average cycle‑time (min)")
+    st.bar_chart(raw_df.groupby("driver")["cycle_time"].mean())
