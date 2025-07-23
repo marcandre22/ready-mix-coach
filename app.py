@@ -4,7 +4,7 @@
 import streamlit as st
 import pandas as pd
 import random
-import openai
+from openai import OpenAI
 from datetime import datetime
 from io import BytesIO
 
@@ -114,7 +114,8 @@ user_q = st.text_input("", placeholder="E.g. What’s my average turnaround time
 if user_q:
     with st.spinner("Coach is thinking / Le coach réfléchit..."):
         prompt = build_prompt(user_q)
-        completion = openai.ChatCompletion.create(
+        client = OpenAI()
+        completion = client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "system", "content": prompt}]
         )
