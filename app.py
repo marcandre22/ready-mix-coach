@@ -1,67 +1,83 @@
-# Ready‑Mix Coach – CDWARE (v3.8)
-# English‑only. Coach leverages internal best‑practice principles (crafted from industry literature).
+# Ready‑Mix Coach – CDWARE (v3.9)
+# English‑only. Expanded dataset with richer telematics fields.
 
 import streamlit as st
 import pandas as pd
 import random
 from openai import OpenAI
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 
 st.set_page_config(page_title="Ready‑Mix Coach", layout="wide", initial_sidebar_state="expanded")
 
-# -------------------------------------------------------------------
-# Brand Styling (dark mode)
-# -------------------------------------------------------------------
+# --- Dark‑mode styling ---
 st.markdown(
-    """
-    <style>
-        body { background-color:#121212; color:#f1f1f1; }
-        .main { background-color:#121212; }
-        h1, h2, h3 { color:#E7662E; }
-        .stButton button { background-color:#E7662E; color:white; font-weight:bold; }
-    </style>
-    """,
+    """<style>
+    body { background:#121212; color:#f1f1f1; }
+    .main { background:#121212; }
+    h1,h2,h3 { color:#E7662E; }
+    .stButton>button { background:#E7662E; color:white; font-weight:bold; }
+    </style>""",
     unsafe_allow_html=True,
 )
 
-st.image("cdware_logo.png", width=280)
+st.image("cdware_logo.png", width=260)
 st.title("CDWARE Ready‑Mix Coach")
 
-# -------------------------------------------------------------------
-# 0. Embedded Best‑Practice Cheat‑Sheet (derived from trusted industry guides)
-# -------------------------------------------------------------------
-BEST_PRACTICE_NOTES = """
-Key ready‑mix dispatch practices:
-• Plan each pour in detail; confirm mix, volume, and site readiness ahead of truck loading.
-• Keep average loading dwell ≤ 7 min to avoid plant congestion.
-• Provide automatic ETA updates to the site at 50 % and 90 % of travel.
-• Escalate if on‑site waiting exceeds 10 min — aim for trucks to be ready to discharge immediately.
-• Track water additions and drum RPM to maintain quality on the road (RPM ≥ 4).
-• Close the loop post‑wash: update KPIs the same day to inform morning stand‑up.
-"""
+# --- Embedded best‑practice cheat‑sheet (internal only) ---
+BEST_PRACTICE = """Key operational principles distilled from *Make It Happen* (full internal digest):
+• Pre‑pour alignment – confirm mix, slump, target volume, site access, and pump readiness prior to dispatch.
+• Loading excellence – loaders aim for ≤ 7 minutes, verify ticket, release air, spin drum at ≥ 4 rpm.
+• Predictive ETAs – send automatic 50 % and 90 % arrival alerts; recalc in traffic.
+• In‑route quality – monitor water additions (< 40 L) and hydraulic pressure to avoid segregation.
+• Site flow – a truck should start discharging ≤ 2 minutes after arrival; escalate if waiting > 10 min.
+• Post‑wash loop – record wash end‑time, fuel used, anomalies, and push cycle KPIs by shift end.
+• Continuous improvement – daily stand‑ups review average stage times, outliers, and driver feedback."""
 
 # -------------------------------------------------------------------
-# 1. Load Simulated Telematics Data
+# 1. Generate richer simulated telematics / ERP data
 # -------------------------------------------------------------------
 @st.cache_data
 
-def load_data():
+def load_data(n_jobs: int = 50):
     drivers = ["Marc", "Julie", "Antoine", "Sarah", "Luc", "Melanie", "Simon", "Elise"]
-    stages  = ["dispatch", "loaded", "en_route", "waiting", "discharging", "washing", "back"]
     plants  = ["Montreal", "Laval", "Quebec", "Drummondville"]
     sites   = ["Longueuil", "Trois‑Rivieres", "Sherbrooke", "Repentigny"]
+
     rows = []
-    for i in range(28):
-        durs = [random.randint(10,25), random.randint(5,10), random.randint(15,30),
-                random.randint(5,20), random.randint(10,20), random.randint(5,10), random.randint(10,25)]
+    base_time = datetime(2025, 7, 15, 5, 0)
+
+    for i in range(n_jobs):
+        start = base_time + timedelta(minutes=random.randint(0, 600))
+        d_dispatch   = random.randint(8, 20)
+        d_loaded     = random.randint(4, 9)
+        d_en_route   = random.randint(12, 35)
+        d_waiting    = random.randint(3, 15)
+        d_disch      = random.randint(8, 18)
+        d_wash       = random.randint(4, 9)
+        d_back       = random.randint(8, 22)
+        durs = [d_dispatch,d_loaded,d_en_route,d_waiting,d_disch,d_wash,d_back]
+
+        water_added = round(random.uniform(0, 120),1)
+        rpm         = random.randint(3, 15)
+        pressure    = random.randint(300, 1200)
+        fuel_used   = round(random.uniform(8, 30),1)  # litres
+        avg_speed   = round(random.uniform(35, 65),1) # km/h while en‑route
+
         row = {
-            "job_id": f"J{1000+i}",
-            "driver": random.choice(drivers),
-            "origin_plant": random.choice(plants),
-            "job_site": random.choice(sites),
-            "cycle_time": sum(durs)
+            "job_id"       : f"J{1000+i}",
+            "driver"       : random.choice(drivers),
+            "origin_plant" : random.choice(plants),
+            "job_site"     : random.choice(sites),
+            "start_time"   : start.strftime("%Y-%m-%d %H:%M"),
+            "cycle_time"   : sum(durs),
+            "water_added_L": water_added,
+            "drum_rpm"     : rpm,
+            "hyd_press_PSI": pressure,
+            "fuel_L"       : fuel_used,
+            "avg_speed_kmh": avg_speed,
         }
+        stages = ["dispatch","loaded","en_route","waiting","discharging","washing","back"]
         for s,v in zip(stages,durs):
             row[f"dur_{s}"] = v
         rows.append(row)
@@ -70,62 +86,63 @@ def load_data():
 raw_df = load_data()
 
 # -------------------------------------------------------------------
-# Sidebar – Data & Export
+# Sidebar utilities
 # -------------------------------------------------------------------
-st.sidebar.header("Data & Export")
-if st.sidebar.checkbox("Show raw data"):
-    st.dataframe(raw_df, use_container_width=True)
-
+st.sidebar.header("Dataset")
+if st.sidebar.checkbox("Show raw table"):
+    st.dataframe(raw_df.head(30), use_container_width=True)
 if st.sidebar.button("Export CSV"):
-    st.sidebar.download_button("Download", raw_df.to_csv(index=False), "ready_mix.csv")
+    st.sidebar.download_button("Download CSV", raw_df.to_csv(index=False), "ready_mix.csv")
 
 # -------------------------------------------------------------------
-# 2. Prompt Builder with data + best practices
+# 2. Prompt builder with richer metrics
 # -------------------------------------------------------------------
 
-def build_prompt(question: str) -> str:
-    stage_avgs = raw_df.filter(like="dur_").mean()
-    snapshot  = "\n".join([f"- Avg {c.replace('dur_','').capitalize()}: {v:.1f} min" for c,v in stage_avgs.items()])
-    prompt = f"""
-You are a ready‑mix dispatch coach.
-Leverage both the live telematics summary and the internal best‑practice notes below to answer.
+def build_prompt(q:str)->str:
+    kpis = {
+        "avg_cycle": f"{raw_df['cycle_time'].mean():.1f} min",
+        "avg_wait": f"{raw_df['dur_waiting'].mean():.1f} min",
+        "avg_load": f"{raw_df['dur_loaded'].mean():.1f} min",
+        "avg_water": f"{raw_df['water_added_L'].mean():.1f} L",
+        "avg_rpm": f"{raw_df['drum_rpm'].mean():.1f} rpm"
+    }
+    snap = "\n".join([f"- {k.replace('_',' ').title()}: {v}" for k,v in kpis.items()])
 
----
-Fleet snapshot
-Jobs: {len(raw_df)} | Avg total cycle: {raw_df['cycle_time'].mean():.1f} min
-{snapshot}
----
-Best‑practice notes (for internal reasoning, not for quoting):
-{BEST_PRACTICE_NOTES}
----
-Guidelines for your answer:
-1. Start with the quantified answer.
-2. Add one concise coaching insight.
-3. Finish with an open follow‑up question.
-4. If info is missing, ask for it.
+    prompt = f"""You are an expert ready‑mix dispatch coach.
+Use the telematics snapshot and internal best‑practice knowledge. NEVER quote the notes directly.
 
-User question: {question}
+Snapshot:
+Jobs: {len(raw_df)}
+{snap}
+
+Best‑practice summary (internal): {BEST_PRACTICE}
+
+Guidelines:
+1. State the numerical answer.
+2. Give one insight.
+3. Ask a follow‑up question.
+4. Request missing info if needed.
+
+Question: {q}
 """
     return prompt
 
 # -------------------------------------------------------------------
-# 3. Chat Interface
+# 3. Chat interface
 # -------------------------------------------------------------------
-question = st.text_input("Ask the coach:")
-if question:
-    with st.spinner("Coach is thinking …"):
-        prompt = build_prompt(question)
+q = st.text_input("Ask the coach:")
+if q:
+    with st.spinner("Thinking…"):
         client = OpenAI()
-        rsp = client.chat.completions.create(
+        out = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role":"system","content":prompt}]
+            messages=[{"role":"system","content":build_prompt(q)}]
         )
-        st.success("Coach says:")
-        st.markdown(rsp.choices[0].message.content)
+        st.markdown(out.choices[0].message.content)
 
 # -------------------------------------------------------------------
-# 4. Optional Insights Button
+# 4. Quick insights button
 # -------------------------------------------------------------------
-if st.button("📈 Anomalies & Driver Performance"):
-    st.subheader("Driver average cycle‑time (min)")
-    st.bar_chart(raw_df.groupby("driver")["cycle_time"].mean())
+if st.button("📈 KPI Charts"):
+    st.subheader("Average stage durations (min)")
+    st.bar_chart(raw_df.filter(like="dur_").mean())
