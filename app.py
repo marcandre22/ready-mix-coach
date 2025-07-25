@@ -118,7 +118,7 @@ for item in st.session_state.chat:
 
 # allow quick-prompt injection
 default_q = st.session_state.pop("inject_q", "") if "inject_q" in st.session_state else ""
-user_q = st.chat_input("Ask the coach …", value=default_q)
+user_q = st.chat_input("Ask the coach …", placeholder=default_q or "Ask the coach …")
 
 def build_prompt(q: str) -> str:
     memory = "\\n".join(f"{m['role'].title()}: {m['msg']}"
