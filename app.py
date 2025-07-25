@@ -1,4 +1,5 @@
-# app.py – Ready-Mix Coach (Modular)
+# Ready‑Mix Coach – CDWARE (v3.12)
+# English‑only. Adds follow-up memory support for smarter coaching. Modularized with knowledge, tone, and instructions.
 
 import streamlit as st
 import pandas as pd
@@ -10,22 +11,41 @@ from dummy_data_gen import load_data
 
 st.set_page_config(page_title="Ready‑Mix Coach", layout="wide", initial_sidebar_state="expanded")
 
-# --- Logo and Title ---
+# --- Dark‑mode styling ---
+st.markdown(
+    """<style>
+    body { background:#121212; color:#f1f1f1; }
+    .main { background:#121212; }
+    h1,h2,h3 { color:#E7662E; }
+    .stButton>button { background:#E7662E; color:white; font-weight:bold; }
+    </style>""",
+    unsafe_allow_html=True,
+)
+
 st.image("cdware_logo.png", width=260)
 st.title("CDWARE Ready‑Mix Coach")
 
-# --- Load data ---
+# -------------------------------------------------------------------
+# 1. Load data
+# -------------------------------------------------------------------
 raw_df = load_data()
 
-# --- Sidebar ---
+# -------------------------------------------------------------------
+# Sidebar utilities
+# -------------------------------------------------------------------
 st.sidebar.header("Dataset")
 if st.sidebar.checkbox("Show raw table"):
     st.dataframe(raw_df.head(30), use_container_width=True)
 if st.sidebar.button("Export CSV"):
     st.sidebar.download_button("Download CSV", raw_df.to_csv(index=False), "ready_mix.csv")
 
-# --- Prompt Builder ---
-def build_prompt(q: str) -> str:
+# -------------------------------------------------------------------
+# 2. Prompt builder with follow-up memory
+# -------------------------------------------------------------------
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+def build_prompt_with_memory(question):
     kpis = {
         "avg_cycle": f"{raw_df['cycle_time'].mean():.1f} min",
         "avg_wait": f"{raw_df['dur_waiting'].mean():.1f} min",
@@ -38,40 +58,50 @@ def build_prompt(q: str) -> str:
     water_by_driver = raw_df.groupby("driver")["water_added_L"].sum().sort_values(ascending=False)
     driver_lines = "\n".join([f"  • {d}: {w:.1f} L" for d, w in water_by_driver.head(5).items()])
 
-    return f"""
-You are a ready‑mix fleet optimization coach.
-Use the context below to answer the question precisely and constructively.
+    memory = "\n".join([f"User: {q['user']}\nCoach: {q['coach']}" for q in st.session_state.chat_history])
 
-Snapshot KPIs (based on {len(raw_df)} jobs):
+    return f"""You are an expert ready‑mix dispatch coach. NEVER quote the knowledge directly.
+
+Session history:
+{memory}
+
+Snapshot KPIs:
+Jobs: {len(raw_df)}
 {snap}
 
-Top drivers by water added:
+Top drivers by water:
 {driver_lines}
 
 Best practices:
 {BEST_PRACTICE}
 
-Coaching tone:
+Tone:
 {COACH_STYLE}
 
 Instructions:
 {GUIDELINES}
 
-Question: {q}
+Current question: {question}
 """
 
-# --- Chat ---
-q = st.text_input("Ask the coach:")
-if q:
+# -------------------------------------------------------------------
+# 3. Chat interface with memory
+# -------------------------------------------------------------------
+question = st.text_input("Ask the coach:")
+if question:
     with st.spinner("Thinking…"):
         client = OpenAI()
-        out = client.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": build_prompt(q)}]
+            messages=[{"role":"system","content":build_prompt_with_memory(question)}]
         )
-        st.markdown(out.choices[0].message.content)
+        answer = response.choices[0].message.content
+        st.markdown(answer)
+        st.session_state.chat_history.append({"user": question, "coach": answer})
 
-# --- KPI Button ---
+# -------------------------------------------------------------------
+# 4. Quick insights button
+# -------------------------------------------------------------------
 if st.button("📈 KPI Charts"):
     st.subheader("Average stage durations (min)")
     st.bar_chart(raw_df.filter(like="dur_").mean())
