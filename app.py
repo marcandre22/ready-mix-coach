@@ -1,12 +1,12 @@
-# Ready‑Mix Coach – CDWARE (v3.12)
-# Adds benchmark input fields and adaptive insights
+# Ready‑Mix Coach – CDWARE (v3.14)
+# ➤ Multi‑day dummy data
+# ➤ Benchmarks moved to sidebar
+# ➤ ChatGPT‑style interface using st.chat_input / st.chat_message
 
 import streamlit as st
 import pandas as pd
-import random
-from openai import OpenAI
 from datetime import datetime, timedelta
-from io import BytesIO
+from openai import OpenAI
 
 from knowledge import BEST_PRACTICE
 from tone_style import COACH_STYLE
@@ -15,119 +15,107 @@ from dummy_data_gen import load_data
 
 st.set_page_config(page_title="Ready‑Mix Coach", layout="wide", initial_sidebar_state="expanded")
 
-# --- Dark‑mode styling ---
-st.markdown(
-    """<style>
-    body { background:#121212; color:#f1f1f1; }
-    .main { background:#121212; }
-    h1,h2,h3 { color:#E7662E; }
-    .stButton>button { background:#E7662E; color:white; font-weight:bold; }
-    </style>""",
-    unsafe_allow_html=True,
+# ---- Header ------------------------------------------------------
+st.image("cdware_logo.png", width=200)
+st.title("CDWARE Ready‑Mix Coach")
+
+# ---- Data --------------------------------------------------------
+if "tickets" not in st.session_state:
+    st.session_state.tickets = load_data(days_back=7, n_jobs_per_day=80)
+
+# CSV uploader
+with st.sidebar.expander("📤 Upload additional tickets (CSV)"):
+    up = st.file_uploader("Choose CSV", type=["csv"])
+    if up is not None:
+        df_new = pd.read_csv(up)
+        if "start_time" in df_new.columns:
+            df_new["start_time"] = pd.to_datetime(df_new["start_time"], errors="coerce")
+        st.session_state.tickets = pd.concat([st.session_state.tickets, df_new], ignore_index=True)
+        st.success(f"Added {len(df_new)} rows — dataset now {len(st.session_state.tickets)} rows")
+
+raw_df = st.session_state.tickets.copy()
+raw_df["start_time"] = pd.to_datetime(raw_df["start_time"], errors="coerce")
+
+# ---- Sidebar: dataset + benchmarks ------------------------------
+st.sidebar.header("🔎 Dataset tools")
+if st.sidebar.checkbox("Preview table"):
+    st.dataframe(raw_df.head(40), use_container_width=True)
+if st.sidebar.button("Download CSV"):
+    st.sidebar.download_button("get_ready_mix.csv", raw_df.to_csv(index=False))
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎯 Benchmarks")
+bench_util  = st.sidebar.number_input("Utilization %", 85.0)
+bench_m3hr  = st.sidebar.number_input("m³ / HR", 3.5)
+bench_m3ld  = st.sidebar.number_input("m³ / Load", 7.6)
+bench_wait  = st.sidebar.number_input("Wait min", 19.0)
+bench_ot    = st.sidebar.number_input("OT %", 10.0)
+bench_fuel  = st.sidebar.number_input("Fuel $/L", 1.75)
+
+bench_txt = (
+    f"Util {bench_util:.1f}% | m³/hr {bench_m3hr:.2f} | m³/load {bench_m3ld:.2f} | "
+    f"Wait {bench_wait:.1f} min | OT {bench_ot:.1f}% | Fuel ${bench_fuel:.2f}/L"
 )
 
-st.image("cdware_logo.png", width=260)
-st.title("CDWARE Ready‑Mix Coach")
+# ---- Progress quick‑view ----------------------------------------
+with st.expander("📊 Progress (today vs yesterday vs 7‑day)"):
+    today,d1w = datetime.now().date(), datetime.now().date()-timedelta(days=1)
+    d7 = today - timedelta(days=7)
+    dfT = raw_df[raw_df.start_time.dt.date==today]
+    dfY = raw_df[raw_df.start_time.dt.date==d1w]
+    df7 = raw_df[raw_df.start_time.dt.date>=d7]
+    def avg(col,frame):
+        return frame[col].mean() if not frame.empty else float('nan')
+    waitT,waitY,wait7 = avg('dur_waiting',dfT), avg('dur_waiting',dfY), avg('dur_waiting',df7)
+    utilT,utilY = len(dfT)/(len(raw_df)+1e-9)*100, len(dfY)/(len(raw_df)+1e-9)*100
+    c1,c2 = st.columns(2)
+    c1.metric("Avg wait today", f"{waitT:0.1f} min", f"Δ{waitT-waitY:+0.1f}")
+    c1.metric("Avg wait 7‑day", f"{wait7:0.1f} min")
+    c2.metric("Util today", f"{utilT:0.1f}%", f"Δ{utilT-utilY:+0.1f}")
 
-# -------------------------------------------------------------------
-# 1. Generate simulated telematics / ERP data
-# -------------------------------------------------------------------
-raw_df = load_data()
+# ---- Chat memory -------------------------------------------------
+if "chat" not in st.session_state:
+    st.session_state.chat = []  # list[dict(role,msg)]
 
-# -------------------------------------------------------------------
-# Sidebar utilities
-# -------------------------------------------------------------------
-st.sidebar.header("Dataset")
-if st.sidebar.checkbox("Show raw table"):
-    st.dataframe(raw_df.head(30), use_container_width=True)
-if st.sidebar.button("Export CSV"):
-    st.sidebar.download_button("Download CSV", raw_df.to_csv(index=False), "ready_mix.csv")
+def show_history():
+    for item in st.session_state.chat:
+        with st.chat_message(item['role']):
+            st.markdown(item['msg'])
 
-# -------------------------------------------------------------------
-# 2. Prompt builder with memory and benchmark inputs
-# -------------------------------------------------------------------
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+show_history()
 
-col1, col2, col3 = st.columns(3)
-col4, col5, col6 = st.columns(3)
+# ---- Chat input --------------------------------------------------
+user_q = st.chat_input("Ask the coach…")
+if user_q:
+    with st.chat_message("user"):
+        st.markdown(user_q)
 
-benchmark_util = col1.number_input("Benchmark Utilization (%)", value=85.0)
-benchmark_m3hr = col2.number_input("Benchmark m³/HR", value=3.5)
-benchmark_m3load = col3.number_input("Benchmark m³/Load", value=7.6)
-benchmark_wait = col4.number_input("Benchmark Wait Time (min)", value=19.0)
-benchmark_ot = col5.number_input("Benchmark OT (%)", value=10.0)
-benchmark_fuel = col6.number_input("Fuel cost $/L", value=1.75)
+    def build_prompt(q):
+        kpi_wait = raw_df['dur_waiting'].mean()
+        kpi_cycle = raw_df['cycle_time'].mean()
+        memory = "\n".join(f"{m['role'].title()}: {m['msg']}" for m in st.session_state.chat[-4:])
+        return (
+            f"You are a senior ready‑mix dispatch coach.\n{memory}\n\n"
+            f"KPIs: wait_avg={kpi_wait:.1f} min, cycle_avg={kpi_cycle:.1f} min\n"
+            f"User benchmarks: {bench_txt}\n"
+            f"Best practices: {BEST_PRACTICE}\nTone: {COACH_STYLE}\nInstructions: {GUIDELINES}\n"
+            f"Question: {q}"
+        )
 
-benchmarks = f"""
-Benchmarks (user-defined):
-- Utilization: {benchmark_util:.1f}%
-- m³/HR: {benchmark_m3hr:.2f}
-- m³/Load: {benchmark_m3load:.2f}
-- Wait Time: {benchmark_wait:.1f} min
-- OT: {benchmark_ot:.1f}%
-- Fuel cost: ${benchmark_fuel:.2f}/L
-"""
-
-def build_prompt_with_memory(question):
-    kpis = {
-        "avg_cycle": f"{raw_df['cycle_time'].mean():.1f} min",
-        "avg_wait": f"{raw_df['dur_waiting'].mean():.1f} min",
-        "avg_load": f"{raw_df['dur_loaded'].mean():.1f} min",
-        "avg_water": f"{raw_df['water_added_L'].mean():.1f} L",
-        "avg_rpm":   f"{raw_df['drum_rpm'].mean():.1f} rpm"
-    }
-    snap = "\n".join([f"- {k.replace('_',' ').title()}: {v}" for k, v in kpis.items()])
-
-    water_by_driver = raw_df.groupby("driver")["water_added_L"].sum().sort_values(ascending=False)
-    driver_lines = "\n".join([f"  • {d}: {w:.1f} L" for d, w in water_by_driver.head(5).items()])
-
-    memory = "\n".join([f"User: {q['user']}\nCoach: {q['coach']}" for q in st.session_state.chat_history])
-
-    return f"""You are an expert ready‑mix dispatch coach. NEVER quote the knowledge directly.
-
-Session history:
-{memory}
-
-Snapshot KPIs:
-Jobs: {len(raw_df)}
-{snap}
-
-Top drivers by water:
-{driver_lines}
-
-{benchmarks}
-
-Best practices:
-{BEST_PRACTICE}
-
-Coaching tone:
-{COACH_STYLE}
-
-Instructions:
-{GUIDELINES}
-
-Current question: {question}
-"""
-
-# -------------------------------------------------------------------
-# 3. Chat interface with memory
-# -------------------------------------------------------------------
-question = st.text_input("Ask the coach:")
-if question:
     with st.spinner("Thinking…"):
         client = OpenAI()
-        response = client.chat.completions.create(
+        coach_reply = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role":"system","content":build_prompt_with_memory(question)}]
-        )
-        answer = response.choices[0].message.content
-        st.markdown(answer)
-        st.session_state.chat_history.append({"user": question, "coach": answer})
+            messages=[{"role":"system","content": build_prompt(user_q)}]
+        ).choices[0].message.content
 
-# -------------------------------------------------------------------
-# 4. Quick insights button
-# -------------------------------------------------------------------
+    with st.chat_message("assistant"):
+        st.markdown(coach_reply)
+
+    st.session_state.chat.append({"role":"user","msg":user_q})
+    st.session_state.chat.append({"role":"assistant","msg":coach_reply})
+
+# ---- Quick KPI chart --------------------------------------------
 if st.button("📈 KPI Charts"):
     st.subheader("Average stage durations (min)")
     st.bar_chart(raw_df.filter(like="dur_").mean())
