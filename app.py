@@ -1,7 +1,8 @@
-# Ready‑Mix Coach – CDWARE (v3.14)
-# ➤ Multi‑day dummy data
-# ➤ Benchmarks moved to sidebar
-# ➤ ChatGPT‑style interface using st.chat_input / st.chat_message
+# Ready‑Mix Coach – CDWARE (v3.15)
+#  ✦ Removes CSV upload
+#  ✦ Ensures multi‑day dummy data (7‑day window)
+#  ✦ Injects Yesterday KPI snapshot so coach can compare immediately
+#  ✦ ChatGPT‑style interface retained
 
 import streamlit as st
 import pandas as pd
@@ -15,107 +16,118 @@ from dummy_data_gen import load_data
 
 st.set_page_config(page_title="Ready‑Mix Coach", layout="wide", initial_sidebar_state="expanded")
 
-# ---- Header ------------------------------------------------------
 st.image("cdware_logo.png", width=200)
-st.title("CDWARE Ready‑Mix Coach")
+st.title("CDWARE Ready‑Mix Coach")
 
-# ---- Data --------------------------------------------------------
+# ------------------------------------------------------------------
+# 1. Load multi‑day simulated data (7 days, 80 tickets / day)
+# ------------------------------------------------------------------
 if "tickets" not in st.session_state:
     st.session_state.tickets = load_data(days_back=7, n_jobs_per_day=80)
-
-# CSV uploader
-with st.sidebar.expander("📤 Upload additional tickets (CSV)"):
-    up = st.file_uploader("Choose CSV", type=["csv"])
-    if up is not None:
-        df_new = pd.read_csv(up)
-        if "start_time" in df_new.columns:
-            df_new["start_time"] = pd.to_datetime(df_new["start_time"], errors="coerce")
-        st.session_state.tickets = pd.concat([st.session_state.tickets, df_new], ignore_index=True)
-        st.success(f"Added {len(df_new)} rows — dataset now {len(st.session_state.tickets)} rows")
 
 raw_df = st.session_state.tickets.copy()
 raw_df["start_time"] = pd.to_datetime(raw_df["start_time"], errors="coerce")
 
-# ---- Sidebar: dataset + benchmarks ------------------------------
-st.sidebar.header("🔎 Dataset tools")
-if st.sidebar.checkbox("Preview table"):
-    st.dataframe(raw_df.head(40), use_container_width=True)
-if st.sidebar.button("Download CSV"):
-    st.sidebar.download_button("get_ready_mix.csv", raw_df.to_csv(index=False))
+# ------------------------------------------------------------------
+# 2. Sidebar tools & Benchmarks
+# ------------------------------------------------------------------
+with st.sidebar:
+    st.header("Dataset preview")
+    if st.checkbox("Show sample rows"):
+        st.dataframe(raw_df.head(40), use_container_width=True)
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 Benchmarks")
-bench_util  = st.sidebar.number_input("Utilization %", 85.0)
-bench_m3hr  = st.sidebar.number_input("m³ / HR", 3.5)
-bench_m3ld  = st.sidebar.number_input("m³ / Load", 7.6)
-bench_wait  = st.sidebar.number_input("Wait min", 19.0)
-bench_ot    = st.sidebar.number_input("OT %", 10.0)
-bench_fuel  = st.sidebar.number_input("Fuel $/L", 1.75)
+    st.markdown("---")
+    st.subheader("🎯 Benchmarks")
+    b_util  = st.number_input("Util %", 85.0)
+    b_m3hr  = st.number_input("m³ / HR", 3.5)
+    b_m3ld  = st.number_input("m³ / Load", 7.6)
+    b_wait  = st.number_input("Wait min", 19.0)
+    b_ot    = st.number_input("OT %", 10.0)
+    b_fuel  = st.number_input("Fuel $/L", 1.75)
 
-bench_txt = (
-    f"Util {bench_util:.1f}% | m³/hr {bench_m3hr:.2f} | m³/load {bench_m3ld:.2f} | "
-    f"Wait {bench_wait:.1f} min | OT {bench_ot:.1f}% | Fuel ${bench_fuel:.2f}/L"
+bench_line = (
+    f"Util {b_util:.1f}% | m³/hr {b_m3hr:.2f} | m³/load {b_m3ld:.2f} | "
+    f"Wait {b_wait:.1f} min | OT {b_ot:.1f}% | Fuel ${b_fuel:.2f}/L"
 )
 
-# ---- Progress quick‑view ----------------------------------------
-with st.expander("📊 Progress (today vs yesterday vs 7‑day)"):
-    today,d1w = datetime.now().date(), datetime.now().date()-timedelta(days=1)
-    d7 = today - timedelta(days=7)
-    dfT = raw_df[raw_df.start_time.dt.date==today]
-    dfY = raw_df[raw_df.start_time.dt.date==d1w]
-    df7 = raw_df[raw_df.start_time.dt.date>=d7]
-    def avg(col,frame):
-        return frame[col].mean() if not frame.empty else float('nan')
-    waitT,waitY,wait7 = avg('dur_waiting',dfT), avg('dur_waiting',dfY), avg('dur_waiting',df7)
-    utilT,utilY = len(dfT)/(len(raw_df)+1e-9)*100, len(dfY)/(len(raw_df)+1e-9)*100
-    c1,c2 = st.columns(2)
-    c1.metric("Avg wait today", f"{waitT:0.1f} min", f"Δ{waitT-waitY:+0.1f}")
-    c1.metric("Avg wait 7‑day", f"{wait7:0.1f} min")
-    c2.metric("Util today", f"{utilT:0.1f}%", f"Δ{utilT-utilY:+0.1f}")
+# ------------------------------------------------------------------
+# 3. KPI helper functions
+# ------------------------------------------------------------------
+TODAY      = datetime.now().date()
+YESTERDAY  = TODAY - timedelta(days=1)
+WEEK_START = TODAY - timedelta(days=7)
 
-# ---- Chat memory -------------------------------------------------
+df_today   = raw_df[raw_df.start_time.dt.date == TODAY]
+df_yest    = raw_df[raw_df.start_time.dt.date == YESTERDAY]
+df_7       = raw_df[raw_df.start_time.dt.date >= WEEK_START]
+
+def _avg(df, col):
+    return float('nan') if df.empty else df[col].mean()
+
+# pre‑compute deltas so coach sees them
+wait_today  = _avg(df_today, 'dur_waiting')
+wait_yest   = _avg(df_yest,  'dur_waiting')
+cycle_today = _avg(df_today, 'cycle_time')
+cycle_yest  = _avg(df_yest,  'cycle_time')
+
+# ------------------------------------------------------------------
+# 4. Progress quick view
+# ------------------------------------------------------------------
+with st.expander("📊 Progress (today vs yesterday)"):
+    c1, c2 = st.columns(2)
+    c1.metric("Avg wait today",  f"{wait_today:0.1f} min",  f"Δ{wait_today - wait_yest:+0.1f}")
+    c2.metric("Avg cycle today", f"{cycle_today:0.1f} min", f"Δ{cycle_today - cycle_yest:+0.1f}")
+
+# ------------------------------------------------------------------
+# 5. Chat memory + UI
+# ------------------------------------------------------------------
 if "chat" not in st.session_state:
-    st.session_state.chat = []  # list[dict(role,msg)]
+    st.session_state.chat = []  # {role,msg}
 
-def show_history():
-    for item in st.session_state.chat:
-        with st.chat_message(item['role']):
-            st.markdown(item['msg'])
+for item in st.session_state.chat:
+    with st.chat_message(item['role']):
+        st.markdown(item['msg'])
 
-show_history()
+# Build snapshot strings once per run
+snapshot = (
+    f"Today KPIs: wait_avg={wait_today:0.1f} min, cycle_avg={cycle_today:0.1f} min\n"
+    f"Yesterday KPIs: wait_avg={wait_yest:0.1f} min, cycle_avg={cycle_yest:0.1f} min\n"
+)
 
-# ---- Chat input --------------------------------------------------
-user_q = st.chat_input("Ask the coach…")
+def build_prompt(question: str) -> str:
+    memory = "\n".join(f"{m['role'].title()}: {m['msg']}" for m in st.session_state.chat[-4:])
+    return (
+        f"You are a seasoned ready‑mix dispatch coach.\n\n"
+        f"{memory}\n\n"
+        f"{snapshot}"
+        f"User benchmarks: {bench_line}\n\n"
+        f"Best practices: {BEST_PRACTICE}\nTone: {COACH_STYLE}\nInstructions: {GUIDELINES}\n\n"
+        f"Question: {question}"
+    )
+
+# ------------------------------------------------------------------
+# 6. Chat input & response
+# ------------------------------------------------------------------
+user_q = st.chat_input("Ask the coach …")
 if user_q:
     with st.chat_message("user"):
         st.markdown(user_q)
 
-    def build_prompt(q):
-        kpi_wait = raw_df['dur_waiting'].mean()
-        kpi_cycle = raw_df['cycle_time'].mean()
-        memory = "\n".join(f"{m['role'].title()}: {m['msg']}" for m in st.session_state.chat[-4:])
-        return (
-            f"You are a senior ready‑mix dispatch coach.\n{memory}\n\n"
-            f"KPIs: wait_avg={kpi_wait:.1f} min, cycle_avg={kpi_cycle:.1f} min\n"
-            f"User benchmarks: {bench_txt}\n"
-            f"Best practices: {BEST_PRACTICE}\nTone: {COACH_STYLE}\nInstructions: {GUIDELINES}\n"
-            f"Question: {q}"
-        )
-
-    with st.spinner("Thinking…"):
-        client = OpenAI()
-        coach_reply = client.chat.completions.create(
+    with st.spinner("Thinking …"):
+        reply = OpenAI().chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role":"system","content": build_prompt(user_q)}]
         ).choices[0].message.content
 
     with st.chat_message("assistant"):
-        st.markdown(coach_reply)
+        st.markdown(reply)
 
-    st.session_state.chat.append({"role":"user","msg":user_q})
-    st.session_state.chat.append({"role":"assistant","msg":coach_reply})
+    st.session_state.chat.append({"role":"user", "msg":user_q})
+    st.session_state.chat.append({"role":"assistant", "msg":reply})
 
-# ---- Quick KPI chart --------------------------------------------
+# ------------------------------------------------------------------
+# 7. Quick KPI chart button
+# ------------------------------------------------------------------
 if st.button("📈 KPI Charts"):
-    st.subheader("Average stage durations (min)")
+    st.subheader("Average stage durations (7‑day average)")
     st.bar_chart(raw_df.filter(like="dur_").mean())
