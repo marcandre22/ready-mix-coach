@@ -1,88 +1,100 @@
-# dummy_data_gen.py – generates updated telematics dataset
-import streamlit as st
+# dummy_data_gen.py
+# -------------------------------------------------------------
+# Generates realistic ready-mix delivery tickets for the coach
+# • Supports multi-day history  (days_back)
+# • Multiple jobs per day      (n_jobs_per_day)
+# • Distance km  + fuel L      (distance_km, fuel_used_L)
+# • Full stage timings & water added
+# -------------------------------------------------------------
+
+import streamlit as st                    # for @st.cache_data
 import pandas as pd
 import random
 from datetime import datetime, timedelta
+from math import sin, cos, sqrt, atan2, radians
 
+# --- simple plant ↔ site catalog with approximate coords -----------
+_PLANTS = {
+    "Montreal":       (45.550, -73.700),
+    "Laval":          (45.610, -73.720),
+    "Quebec":         (46.820, -71.220),
+    "Drummondville":  (45.883, -72.470),
+}
 
+_SITES = {
+    "Longueuil":      (45.530, -73.520),
+    "Trois-Rivieres": (46.350, -72.560),
+    "Sherbrooke":     (45.400, -71.900),
+    "Repentigny":     (45.740, -73.470),
+}
+
+_DRIVERS = ["Marc", "Julie", "Antoine", "Sarah",
+            "Luc", "Melanie", "Simon", "Elise"]
+
+def _haversine(p, s):
+    """Rough distance in km between two lat/long tuples."""
+    R = 6371.0
+    lat1, lon1 = radians(p[0]), radians(p[1])
+    lat2, lon2 = radians(s[0]), radians(s[1])
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    a = sin(dlat/2)**2 + cos(lat1)*cos(lat2)*sin(dlon/2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1-a))
+    return R * c
+
+# ------------------------------------------------------------------
 @st.cache_data
-def load_data(n_projects: int = 3):
-    drivers = ["Marc", "Julie", "Antoine", "Sarah", "Luc", "Melanie", "Simon", "Elise"]
-    plants = ["Montreal", "Laval", "Quebec", "Drummondville"]
-    job_sites = ["Longueuil", "Trois-Rivieres", "Sherbrooke", "Repentigny"]
-    mix_type = "32 MPa 14mm Mix 5-8% Air"
-
-    site_distances_km = {
-        ("Montreal", "Longueuil"): 12,
-        ("Montreal", "Trois-Rivieres"): 140,
-        ("Montreal", "Sherbrooke"): 155,
-        ("Montreal", "Repentigny"): 36,
-        ("Laval", "Longueuil"): 28,
-        ("Laval", "Trois-Rivieres"): 130,
-        ("Laval", "Sherbrooke"): 145,
-        ("Laval", "Repentigny"): 30,
-        ("Quebec", "Longueuil"): 240,
-        ("Quebec", "Trois-Rivieres"): 130,
-        ("Quebec", "Sherbrooke"): 230,
-        ("Quebec", "Repentigny"): 210,
-        ("Drummondville", "Longueuil"): 105,
-        ("Drummondville", "Trois-Rivieres"): 85,
-        ("Drummondville", "Sherbrooke"): 70,
-        ("Drummondville", "Repentigny"): 95
-    }
-
+def load_data(*, days_back: int = 3, n_jobs_per_day: int = 60) -> pd.DataFrame:
+    """
+    Return a DataFrame of simulated tickets spanning `days_back` days.
+    """
     rows = []
-    job_id_base = 1000
-    ticket_id_base = 5000
-    base_time = datetime(2025, 7, 15, 5, 0)
+    ticket_id = 10_000
+    base = datetime.now().replace(hour=6, minute=0, second=0, microsecond=0)
 
-    for p in range(n_projects):
-        project_name = f"Project {chr(65+p)}"
-        total_volume = random.randint(80, 150)
-        load_volume = 10
-        num_loads = total_volume // load_volume
+    for d in range(days_back):
+        day_start = base - timedelta(days=d)
+        for _ in range(n_jobs_per_day):
+            start = day_start + timedelta(minutes=random.randint(0, 12*60))
+            plant   = random.choice(list(_PLANTS))
+            site    = random.choice(list(_SITES))
+            dist_km = round(_haversine(_PLANTS[plant], _SITES[site]), 1)
 
-        for l in range(num_loads):
-            start_time = base_time + timedelta(minutes=random.randint(0, 600))
-            origin = random.choice(plants)
-            site = random.choice(job_sites)
-            distance_km = site_distances_km.get((origin, site), random.randint(10, 200))
+            # stage durations (min)
+            d_dispatch   = random.randint(8, 20)
+            d_loaded     = random.randint(4, 9)
+            d_en_route   = max(5, int(dist_km/1.8))        # crude scaling
+            d_waiting    = random.randint(3, 15)
+            d_disch      = random.randint(8, 18)
+            d_wash       = random.randint(4, 9)
+            d_back       = max(5, int(dist_km/1.8))
+            durs = [d_dispatch,d_loaded,d_en_route,
+                    d_waiting,d_disch,d_wash,d_back]
 
-            d_dispatch = random.randint(8, 20)
-            d_loaded = random.randint(4, 9)
-            d_en_route = random.randint(12, 35)
-            d_waiting = random.randint(3, 15)
-            d_disch = random.randint(8, 18)
-            d_wash = random.randint(4, 9)
-            d_back = random.randint(8, 22)
-            durs = [d_dispatch, d_loaded, d_en_route, d_waiting, d_disch, d_wash, d_back]
-
-            fuel_rate = random.uniform(0.35, 0.55)  # L/km
-            fuel_used = round(distance_km * fuel_rate, 1)
+            fuel_L  = round(dist_km * random.uniform(0.35, 0.55), 1)
+            water_L = round(random.uniform(50, 150), 1)
 
             row = {
-                "project": project_name,
-                "job_id": f"J{job_id_base + p}",
-                "ticket_id": f"T{ticket_id_base + l + (p * num_loads)}",
-                "driver": random.choice(drivers),
-                "origin_plant": origin,
-                "job_site": site,
-                "start_time": start_time.strftime("%Y-%m-%d %H:%M"),
-                "cycle_time": sum(durs),
-                "dur_dispatch": d_dispatch,
-                "dur_loaded": d_loaded,
-                "dur_en_route": d_en_route,
-                "dur_waiting": d_waiting,
-                "dur_discharging": d_disch,
-                "dur_washing": d_wash,
-                "dur_back": d_back,
-                "distance_km": distance_km,
-                "fuel_used_L": fuel_used,
-                "load_volume_m3": load_volume,
-                "water_added_L": round(random.uniform(50, 150), 1),
-                "drum_rpm": random.randint(3, 15),
-                "mix": mix_type
+                "ticket_id":   f"T{ticket_id}",
+                "project":     f"Project {chr(65 + d)}",
+                "job_id":      f"J{1000+d}",
+                "driver":      random.choice(_DRIVERS),
+                "origin_plant":plant,
+                "job_site":    site,
+                "start_time":  start.strftime("%Y-%m-%d %H:%M"),
+                "cycle_time":  sum(durs),
+                "distance_km": dist_km,
+                "fuel_used_L": fuel_L,
+                "water_added_L": water_L,
+                "load_volume_m3": 10,
             }
-            rows.append(row)
+            stages = ["dispatch","loaded","en_route","waiting",
+                      "discharging","washing","back"]
+            for s,v in zip(stages, durs):
+                row[f"dur_{s}"] = v
 
-    return pd.DataFrame(rows)
+            rows.append(row)
+            ticket_id += 1
+
+    df = pd.DataFrame(rows)
+    df["start_time"] = pd.to_datetime(df["start_time"])
+    return df
