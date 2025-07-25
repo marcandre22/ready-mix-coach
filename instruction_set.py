@@ -1,6 +1,6 @@
 # instruction_set.py
 # Defines how the coach should behave
-INSTRUCTION_SET = {
+GUIDELINES = {
     "language": "English",
     "domain": "Ready-Mix Concrete Operations",
     "rules": [
