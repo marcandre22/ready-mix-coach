@@ -1,7 +1,9 @@
 # dummy_data_gen.py – generates updated telematics dataset
+import streamlit as st
 import pandas as pd
 import random
 from datetime import datetime, timedelta
+
 
 @st.cache_data
 def load_data(n_projects: int = 3):
