@@ -1,9 +1,13 @@
 # Ready‑Mix Coach – CDWARE (v3.12)
-# English‑only. Adds follow-up memory support for smarter coaching. Modularized with knowledge, tone, and instructions.
+# Adds benchmark input fields and adaptive insights
 
 import streamlit as st
 import pandas as pd
+import random
 from openai import OpenAI
+from datetime import datetime, timedelta
+from io import BytesIO
+
 from knowledge import BEST_PRACTICE
 from tone_style import COACH_STYLE
 from instruction_set import GUIDELINES
@@ -26,7 +30,7 @@ st.image("cdware_logo.png", width=260)
 st.title("CDWARE Ready‑Mix Coach")
 
 # -------------------------------------------------------------------
-# 1. Load data
+# 1. Generate simulated telematics / ERP data
 # -------------------------------------------------------------------
 raw_df = load_data()
 
@@ -40,10 +44,30 @@ if st.sidebar.button("Export CSV"):
     st.sidebar.download_button("Download CSV", raw_df.to_csv(index=False), "ready_mix.csv")
 
 # -------------------------------------------------------------------
-# 2. Prompt builder with follow-up memory
+# 2. Prompt builder with memory and benchmark inputs
 # -------------------------------------------------------------------
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+
+col1, col2, col3 = st.columns(3)
+col4, col5, col6 = st.columns(3)
+
+benchmark_util = col1.number_input("Benchmark Utilization (%)", value=85.0)
+benchmark_m3hr = col2.number_input("Benchmark m³/HR", value=3.5)
+benchmark_m3load = col3.number_input("Benchmark m³/Load", value=7.6)
+benchmark_wait = col4.number_input("Benchmark Wait Time (min)", value=19.0)
+benchmark_ot = col5.number_input("Benchmark OT (%)", value=10.0)
+benchmark_fuel = col6.number_input("Fuel cost $/L", value=1.75)
+
+benchmarks = f"""
+Benchmarks (user-defined):
+- Utilization: {benchmark_util:.1f}%
+- m³/HR: {benchmark_m3hr:.2f}
+- m³/Load: {benchmark_m3load:.2f}
+- Wait Time: {benchmark_wait:.1f} min
+- OT: {benchmark_ot:.1f}%
+- Fuel cost: ${benchmark_fuel:.2f}/L
+"""
 
 def build_prompt_with_memory(question):
     kpis = {
@@ -72,10 +96,12 @@ Jobs: {len(raw_df)}
 Top drivers by water:
 {driver_lines}
 
+{benchmarks}
+
 Best practices:
 {BEST_PRACTICE}
 
-Tone:
+Coaching tone:
 {COACH_STYLE}
 
 Instructions:
