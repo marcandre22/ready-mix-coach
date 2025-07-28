@@ -94,6 +94,10 @@ def load_data(*, days_back: int = 3, n_jobs_per_day: int = 60) -> pd.DataFrame:
                 "first_ticket": first_ticket,
                 "last_return":  last_return,
                 "ignition_off": ignition_off,
+                "plant_in": ignition_on,
+                "plant_out": start + timedelta(minutes=d_dispatch + d_loaded),
+                "site_in": start + timedelta(minutes=d_dispatch + d_loaded + d_en_route),
+                "site_out": start + timedelta(minutes=d_dispatch + d_loaded + d_en_route + d_waiting + d_disch),
             }
             stages = ["dispatch","loaded","en_route","waiting",
                       "discharging","washing","back"]
