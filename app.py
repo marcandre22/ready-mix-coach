@@ -117,6 +117,25 @@ with st.expander("🚚 Fleet productivity (today)"):
         use_container_width=True,
     )
 
+# 6b. Geofence Dwell Times
+with st.expander("📍 Geofence Dwell Times (Plant & Site)"):
+    df_dwell = kpis["df_today"][
+        ["truck", "plant_in", "plant_out", "plant_dwell", "site_in", "site_out", "site_dwell"]
+    ].sort_values("plant_in")
+
+    df_dwell = df_dwell.rename(columns={
+        "truck": "Truck",
+        "plant_in": "Plant In",
+        "plant_out": "Plant Out",
+        "plant_dwell": "Plant Dwell (min)",
+        "site_in": "Site In",
+        "site_out": "Site Out",
+        "site_dwell": "Site Dwell (min)",
+    })
+
+    st.dataframe(df_dwell, use_container_width=True)
+
+
 # -------------------------------------------------------------------
 # 7. Chat helpers
 # -------------------------------------------------------------------
