@@ -1,9 +1,11 @@
+
 import streamlit as st
 import pandas as pd
 import datetime
 import openai
 import os
 import random
+import altair as alt
 
 from dummy_data_gen import load_data
 from coach_core import get_kpis, handle_simple_prompt
@@ -43,12 +45,18 @@ if selected_tab == "Reporting":
     col2.metric("Avg Waiting Time (min)", f"{kpis['prod_idle_min'] / kpis['n_trucks']:.1f}")
     col3.metric("Utilization", f"{kpis['utilization_pct']:.1f}%")
 
+    # KPI Summary Table
+    if "summary" in kpis:
+        st.subheader("📊 KPI Summary Table")
+        df_summary = pd.DataFrame(kpis["summary"]).T
+        df_summary.index.name = "Period"
+        st.dataframe(df_summary)
+
     # Sample Charts (Fleet Productivity)
-    import altair as alt
     st.subheader("📈 Fleet Productivity")
     chart_data = kpis["df_today"][["truck", "min_prod", "min_total"]].copy()
-    chart_data = chart_data[chart_data["min_total"] > 0]
     chart_data["prod_pct"] = chart_data["min_prod"] / chart_data["min_total"] * 100
+    chart_data = chart_data[chart_data["prod_pct"].notna()]
     st.altair_chart(
         alt.Chart(chart_data).mark_bar().encode(
             x="truck:O",
@@ -93,23 +101,9 @@ elif selected_tab == "Chat":
                     st.error("There was an error generating a response. Please try again later.")
 
     # Suggested prompts (random 5)
-    st.markdown("#### Suggested questions:")
-    for q in random.sample(SUGGESTED_PROMPTS, k=min(5, len(SUGGESTED_PROMPTS))):
-        if st.button(q):
-            st.session_state.chat_history.append({"role": "user", "content": q})
-            with st.chat_message("user"):
-                st.markdown(q)
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    try:
-                        messages = [{"role": "system", "content": COACH_STYLE}] + st.session_state.chat_history
-                        response = openai.ChatCompletion.create(
-                            model="gpt-4",
-                            messages=messages,
-                            temperature=0.4,
-                        )
-                        answer = response.choices[0].message.content.strip()
-                        st.markdown(answer)
-                        st.session_state.chat_history.append({"role": "assistant", "content": answer})
-                    except Exception as e:
-                        st.error("There was an error generating a response. Please try again later.")
+    if not user_input:
+        st.markdown("#### Suggested questions:")
+        for q in random.sample(SUGGESTED_PROMPTS, k=min(5, len(SUGGESTED_PROMPTS))):
+            if st.button(q):
+                st.session_state.chat_history.append({"role": "user", "content": q})
+                st.rerun()
