@@ -2,104 +2,57 @@ import streamlit as st
 import pandas as pd
 import datetime
 import openai
-import os
+import random
 
 from dummy_data_gen import load_data
 from coach_core import get_kpis, handle_simple_prompt
 from instruction_set import GUIDELINES, SUGGESTED_PROMPTS
 from tone_style import COACH_STYLE
 
-# ✅ Set OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
-if not openai.api_key:
-    st.error("OpenAI API key not found. Please set OPENAI_API_KEY.")
-    st.stop()
-
+# --- UI Config ---
 st.set_page_config(page_title="CDWARE Ready-Mix Coach", layout="wide")
-st.markdown("""
-    <style>
-        #MainMenu, header, footer {visibility: hidden;}
-        .block-container {padding-top: 2rem;}
-        .stChatFloatingInputContainer {bottom: 3.5rem !important;}
-    </style>
-""", unsafe_allow_html=True)
+st.markdown("<h1 style='margin-bottom: 0'>🧠 Ask your coach a question</h1>", unsafe_allow_html=True)
 
-# Load data
-with st.spinner("Loading ticket data..."):
-    df = load_data()
-    kpis = get_kpis(df)
+# --- Load Data + KPIs ---
+df = load_data(days_back=3)
+kpis = get_kpis(df, op_minutes=600)
 
-# Sidebar (Navigation and Filters)
-st.sidebar.image("https://cdn.cdwtech.ca/logo-white.png", use_container_width=True)
-selected_tab = st.sidebar.radio("", ["Reporting", "Chat"], index=0)
+# --- Suggested Prompts ---
+st.markdown("### Suggested questions:")
+for p in random.sample(SUGGESTED_PROMPTS, k=5):
+    if st.button(p):
+        st.session_state["last_prompt"] = p
+        st.rerun()
 
-if selected_tab == "Reporting":
-    st.markdown("## 🚧 Reporting Dashboard")
+# --- Input Box ---
+prompt = st.chat_input("Ask a question")
+if prompt:
+    st.session_state["last_prompt"] = prompt
+    st.rerun()
 
-    # Top KPIs
-    col1, col2, col3 = st.columns(3)
-    col1.metric("# Loads (vs Yesterday)", f"{kpis['loads_today']}")
-    col2.metric("Avg Waiting Time (min)", f"{kpis['prod_idle_min'] / kpis['n_trucks']:.1f}")
-    col3.metric("Utilization", f"{kpis['utilization_pct']:.1f}%")
+prompt = st.session_state.get("last_prompt", "")
+if prompt:
+    st.markdown(f"**{prompt}**")
 
-    # KPI Summary Table
-    st.subheader("📊 KPI Summary Table")
-    df_summary = pd.DataFrame(kpis["summary"]).T
-    df_summary.index.name = "Period"
-    st.dataframe(df_summary)
+    # 1. Check rule-based answer
+    reply = handle_simple_prompt(prompt, kpis)
 
-    # Sample Charts (Fleet Productivity)
-    import altair as alt
-    st.subheader("📈 Fleet Productivity")
-    chart_data = kpis["df_today"][["truck", "min_prod", "min_total"]].copy()
-    chart_data["prod_pct"] = chart_data["min_prod"] / chart_data["min_total"] * 100
-    st.altair_chart(
-        alt.Chart(chart_data).mark_bar().encode(
-            x="truck:O",
-            y="prod_pct:Q",
-            tooltip=["truck", "prod_pct"]
-        ).properties(height=300),
-        use_container_width=True
-    )
-
-elif selected_tab == "Chat":
-    st.markdown("## 💬 Ask your coach a question")
-
-    # Initialize chat history
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-
-    # Display messages
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    # Input box
-    user_input = st.chat_input("Ask a question")
-    if user_input:
-        st.session_state.chat_history.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
-
-        # Generate response using OpenAI
-        with st.chat_message("assistant"):
+    # 2. Fallback to OpenAI
+    if not reply:
+        openai.api_key = st.secrets.get("OPENAI_API_KEY")
+        messages = [
+            {"role": "system", "content": GUIDELINES + "\n\n" + COACH_STYLE},
+            {"role": "user", "content": prompt},
+        ]
+        with st.spinner("Thinking..."):
             try:
-                messages = [{"role": "system", "content": COACH_STYLE}] + st.session_state.chat_history
-                response = openai.ChatCompletion.create(
+                res = openai.ChatCompletion.create(
                     model="gpt-4",
                     messages=messages,
-                    temperature=0.4,
+                    temperature=0.4
                 )
-                answer = response.choices[0].message.content.strip()
-                st.markdown(answer)
-                st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                reply = res.choices[0].message.content
             except Exception as e:
-                st.error("There was an error generating a response. Please try again later.")
+                reply = f"⚠️ OpenAI error: {e}"
 
-    # Suggested prompts section after assistant message
-    if not user_input:
-        st.markdown("#### Suggested questions:")
-        for q in SUGGESTED_PROMPTS:
-            if st.button(q):
-                st.session_state.chat_history.append({"role": "user", "content": q})
-                st.rerun()
+    st.success(reply)
