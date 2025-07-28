@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 import pandas as pd
 import re
+import statistics
 
 def _mins(a, b):
     if pd.isna(a) or pd.isna(b):
@@ -21,15 +22,23 @@ def _date_masks(df):
     }
 
 def _summary_block(df):
-    if df.empty: return {}
-    first = df.groupby(df["start_time"].dt.date)["start_time"].min().dt.time.mean()
-    last = df.groupby(df["start_time"].dt.date)["start_time"].max().dt.time.mean()
+    if df.empty:
+        return {}
+    try:
+        grouped = df.groupby(df["start_time"].dt.date)["start_time"]
+        first_avg = statistics.mean([ts.min().time().hour * 60 + ts.min().time().minute for _, ts in grouped])
+        last_avg  = statistics.mean([ts.max().time().hour * 60 + ts.max().time().minute for _, ts in grouped])
+        first_avg_str = f"{int(first_avg // 60):02d}:{int(first_avg % 60):02d}"
+        last_avg_str  = f"{int(last_avg // 60):02d}:{int(last_avg % 60):02d}"
+    except Exception:
+        first_avg_str, last_avg_str = "--", "--"
+
     return {
         "m3": df["load_volume_m3"].sum(),
         "loads": len(df),
         "avg_size": df["load_volume_m3"].mean(),
-        "first_avg": first.strftime("%H:%M") if pd.notna(first) else "--",
-        "last_avg":  last.strftime("%H:%M") if pd.notna(last) else "--",
+        "first_avg": first_avg_str,
+        "last_avg":  last_avg_str,
         "jobs": df["job_site"].nunique(),
         "trucks": df["truck"].nunique(),
         "loads_per_truck": len(df)/df["truck"].nunique() if df["truck"].nunique() else float("nan"),
