@@ -1,48 +1,71 @@
-# coach_core.py – KPI logic incl. productivity & corrected utilization
+# coach_core.py – includes summary block + geofence + utilization
 from datetime import datetime, timedelta
 import pandas as pd
 import re
 
-# ---------------------------------------------------------------------
-# 1. Helpers
-# ---------------------------------------------------------------------
 def _mins(a, b):
-    """Return minutes between two pd.Timestamp values (handles NaT)."""
     if pd.isna(a) or pd.isna(b):
         return float("nan")
     return (b - a).total_seconds() / 60
 
+def _date_masks(df):
+    today = datetime.now().date()
+    monday = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+    year_start = today.replace(month=1, day=1)
+    return {
+        "daily": df[df["start_time"].dt.date == today],
+        "wtd":   df[df["start_time"].dt.date >= monday],
+        "mtd":   df[df["start_time"].dt.date >= month_start],
+        "ytd":   df[df["start_time"].dt.date >= year_start],
+    }
 
-# ---------------------------------------------------------------------
-# 2. KPI extraction
-# ---------------------------------------------------------------------
-def get_kpis(df: pd.DataFrame, op_minutes: int = 600) -> dict:
-    """
-    Compute headline KPIs for *today*.
-    `op_minutes` is the nominal shift length PER TRUCK (default 10 h = 600 min).
-    """
+def _summary_block(df):
+    if df.empty: return {}
+    first = df.groupby(df["start_time"].dt.date)["start_time"].min().dt.time.mean()
+    last = df.groupby(df["start_time"].dt.date)["start_time"].max().dt.time.mean()
+    return {
+        "m3": df["load_volume_m3"].sum(),
+        "loads": len(df),
+        "avg_size": df["load_volume_m3"].mean(),
+        "first_avg": first.strftime("%H:%M") if pd.notna(first) else "--",
+        "last_avg":  last.strftime("%H:%M") if pd.notna(last) else "--",
+        "jobs": df["job_site"].nunique(),
+        "trucks": df["truck"].nunique(),
+        "loads_per_truck": len(df)/df["truck"].nunique() if df["truck"].nunique() else float("nan"),
+        "cycle_avg": df["cycle_time"].mean(),
+        "demurrage": (df["dur_waiting"] > 10).sum(),
+        "excess_wash": (df["dur_washing"] > 8).sum(),
+        "unscheduled": df["unscheduled_stop"].sum() if "unscheduled_stop" in df else 0,
+    }
+
+def get_kpis(df: pd.DataFrame, op_minutes: int = 600):
     today = datetime.now().date()
     df_today = df[df["start_time"].dt.date == today]
 
-    # ----- Utilization ------------------------------------------------
     cycle_minutes = df_today["cycle_time"].sum()
     n_trucks = df_today["truck"].nunique()
     denom = op_minutes * n_trucks if n_trucks else float("nan")
     utilization_pct = (cycle_minutes / denom * 100) if denom else float("nan")
 
-    # ----- Productivity slices ---------------------------------------
     if {"ignition_on", "first_ticket", "last_return", "ignition_off"}.issubset(df_today.columns):
         df_today = df_today.copy()
         df_today["min_total"] = df_today.apply(lambda r: _mins(r.ignition_on, r.ignition_off), axis=1)
         df_today["min_prod"]  = df_today.apply(lambda r: _mins(r.first_ticket, r.last_return), axis=1)
         df_today["prod_ratio"] = df_today["min_prod"] / df_today["min_total"] * 100
-
-        tot_min  = df_today["min_total"].sum()
+        tot_min = df_today["min_total"].sum()
         prod_min = df_today["min_prod"].sum()
         idle_min = tot_min - prod_min
         prod_pct = prod_min / tot_min * 100 if tot_min else float("nan")
     else:
         tot_min = prod_min = idle_min = prod_pct = float("nan")
+
+    if {"plant_in", "plant_out", "site_in", "site_out"}.issubset(df_today.columns):
+        df_today["plant_dwell"] = df_today.apply(lambda r: _mins(r.plant_in, r.plant_out), axis=1)
+        df_today["site_dwell"] = df_today.apply(lambda r: _mins(r.site_in, r.site_out), axis=1)
+
+    masks = _date_masks(df)
+    summary = {k: _summary_block(v) for k, v in masks.items()}
 
     return {
         "df_today": df_today,
@@ -53,39 +76,18 @@ def get_kpis(df: pd.DataFrame, op_minutes: int = 600) -> dict:
         "prod_prod_min": prod_min,
         "prod_idle_min": idle_min,
         "prod_ratio": prod_pct,
-        "op_minutes": op_minutes,
         "n_trucks": n_trucks,
+        "op_minutes": op_minutes,
+        "summary": summary,
     }
 
-
-# ---------------------------------------------------------------------
-# 3. Quick-answer rules (skip GPT when possible)
-# ---------------------------------------------------------------------
-def handle_simple_prompt(prompt: str, kpis: dict) -> str | None:
+def handle_simple_prompt(prompt: str, kpis: dict):
     p = prompt.lower()
-
-    # Utilization ------------------------------------------------------
     if "utilization" in p:
-        custom = re.search(r"(\\d+(?:\\.\\d+)?)\\s*(hour|hr|h)", p)
-        n = kpis["n_trucks"] or 1
-        if custom:
-            op_min = float(custom.group(1)) * 60 * n
-            util = (kpis["df_today"]["cycle_time"].sum() / op_min * 100) if op_min else float("nan")
-            return f"Estimated utilization today is **{util:.1f}%** (window: {custom.group(1)} h × {n} trucks)."
-        return f"Estimated utilization today is **{kpis['utilization_pct']:.1f}%** (10 h × {n} trucks)."
-
-    # Productivity ratio ----------------------------------------------
-    if any(kw in p for kw in ["productive", "idle", "productivity ratio", "truck productivity"]):
-        r = kpis["prod_ratio"]
-        prod_h = kpis["prod_prod_min"] / 60
-        idle_h = kpis["prod_idle_min"] / 60
-        return (
-            f"Fleet today: **{r:.1f}% productive** "
-            f"(≈ {prod_h:.1f} h productive vs {idle_h:.1f} h idle)."
-        )
-
-    # Quick loads today
-    if "loads today" in p:
-        return f"There were **{kpis['loads_today']}** loads delivered today."
-
+        return f"Utilization today is **{kpis['utilization_pct']:.1f}%** across {kpis['n_trucks']} trucks."
+    if "dwell" in p or "geofence" in p:
+        df = kpis["df_today"]
+        plant_avg = df["plant_dwell"].mean() if "plant_dwell" in df else float("nan")
+        site_avg = df["site_dwell"].mean() if "site_dwell" in df else float("nan")
+        return f"Avg plant dwell time: {plant_avg:.0f} min | site dwell: {site_avg:.0f} min"
     return None
