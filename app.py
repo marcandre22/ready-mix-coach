@@ -137,7 +137,8 @@ def _chat(user_q: str):
     st.session_state.chat.append({"role": "assistant", "msg": reply})
 
 # allow quick-prompt injection
-user_q = st.chat_input("Ask the coach …", placeholder=st.session_state.pop("inject_q", "") if "inject_q" in st.session_state else "")
+inject_q = st.session_state.pop("inject_q") if "inject_q" in st.session_state else ""
+user_q = st.chat_input("Ask the coach …", placeholder=inject_q or "Ask the coach …") if "inject_q" in st.session_state else "")
 if user_q:
     _chat(user_q)
 
