@@ -36,7 +36,7 @@ selected_tab = st.sidebar.radio("", ["Reporting", "Chat"], index=0)
 
 if selected_tab == "Reporting":
     st.markdown("## 📊 KPI Summary Table")
-    df_summary = pd.DataFrame(kpis["summary"]).T
+    df_summary = pd.DataFrame({"daily": kpis["summary"]}).T
     df_summary.index.name = "Period"
     st.dataframe(df_summary)
 
