@@ -2,11 +2,18 @@ import streamlit as st
 import pandas as pd
 import datetime
 import openai
+import os
 
 from dummy_data_gen import load_data
 from coach_core import get_kpis, handle_simple_prompt
 from instruction_set import GUIDELINES, SUGGESTED_PROMPTS
 from tone_style import COACH_STYLE
+
+# ✅ Set OpenAI API key
+openai.api_key = os.getenv("OPENAI_API_KEY")
+if not openai.api_key:
+    st.error("OpenAI API key not found. Please set OPENAI_API_KEY.")
+    st.stop()
 
 st.set_page_config(page_title="CDWARE Ready-Mix Coach", layout="wide")
 st.markdown("""
@@ -23,7 +30,7 @@ with st.spinner("Loading ticket data..."):
     kpis = get_kpis(df)
 
 # Sidebar (Navigation and Filters)
-st.sidebar.image("https://cdn.cdwtech.ca/logo-white.png", use_column_width=True)
+st.sidebar.image("https://cdn.cdwtech.ca/logo-white.png", use_container_width=True)
 selected_tab = st.sidebar.radio("", ["Reporting", "Chat"], index=0)
 
 if selected_tab == "Reporting":
@@ -89,9 +96,10 @@ elif selected_tab == "Chat":
             except Exception as e:
                 st.error("There was an error generating a response. Please try again later.")
 
-    # Suggested prompts
-    st.markdown("#### Suggested questions:")
-    for q in SUGGESTED_PROMPTS:
-        if st.button(q):
-            st.session_state.chat_history.append({"role": "user", "content": q})
-            st.experimental_rerun()
+    # Suggested prompts section after assistant message
+    if not user_input:
+        st.markdown("#### Suggested questions:")
+        for q in SUGGESTED_PROMPTS:
+            if st.button(q):
+                st.session_state.chat_history.append({"role": "user", "content": q})
+                st.rerun()
