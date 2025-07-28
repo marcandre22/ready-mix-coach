@@ -1,144 +1,93 @@
-# coach_core.py – expanded KPI logic (fuel, distance, 7‑ & 30‑day averages)
+# coach_core.py – KPI logic incl. productivity (pre‑idle, productive, post‑idle)
 from datetime import datetime, timedelta
 import pandas as pd
+import re
 
-# ----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # 1.  KPI extraction helpers
-# ----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
-def get_kpis(df: pd.DataFrame) -> dict:
-    """Return a dictionary of all headline KPIs we may want to answer quickly."""
+def _mins(a, b):
+    """Return minutes between two pd.Timestamp values (handles NaT)."""
+    if pd.isna(a) or pd.isna(b):
+        return float("nan")
+    return (b - a).total_seconds() / 60
+
+
+def get_kpis(df: pd.DataFrame, op_minutes: int = 600) -> dict:
+    """Compute headline & productivity KPIs for *today* plus frames for further use."""
 
     today = datetime.now().date()
-    yesterday = today - timedelta(days=1)
+    df_today = df[df["start_time"].dt.date == today]
 
-    last_7_days  = today - timedelta(days=7)
-    last_30_days = today - timedelta(days=30)
+    # ------------------------------------------------------------------
+    # Basic day‑to‑day KPIs (loads, cycle, utilization)
+    # ------------------------------------------------------------------
+    cycle_minutes = df_today["cycle_time"].sum()
+    utilization_pct = (cycle_minutes / op_minutes * 100) if op_minutes else float("nan")
 
-    # Slice data
-    df_today  = df[df["start_time"].dt.date == today]
-    df_yest   = df[df["start_time"].dt.date == yesterday]
-    df_7day   = df[df["start_time"].dt.date >= last_7_days]
-    df_30day  = df[df["start_time"].dt.date >= last_30_days]
+    # ------------------------------------------------------------------
+    # Productivity slices (requires ignition & ticket timestamps)
+    # ------------------------------------------------------------------
+    if {"ignition_on", "first_ticket", "last_return", "ignition_off"}.issubset(df_today.columns):
+        df_today = df_today.copy()
+        df_today["min_total"] = df_today.apply(lambda r: _mins(r.ignition_on, r.ignition_off), axis=1)
+        df_today["min_pre"]   = df_today.apply(lambda r: _mins(r.ignition_on, r.first_ticket), axis=1)
+        df_today["min_prod"]  = df_today.apply(lambda r: _mins(r.first_ticket, r.last_return), axis=1)
+        df_today["min_post"]  = df_today.apply(lambda r: _mins(r.last_return, r.ignition_off), axis=1)
+        df_today["prod_ratio"] = df_today["min_prod"] / df_today["min_total"] * 100
 
-    # Group by date for daily aggregates (used for rolling averages)
-    grouped_7d   = df_7day.groupby(df_7day["start_time"].dt.date)
-    grouped_30d  = df_30day.groupby(df_30day["start_time"].dt.date)
+        fleet_total_min   = df_today["min_total"].sum()
+        fleet_prod_min    = df_today["min_prod"].sum()
+        fleet_idle_min    = fleet_total_min - fleet_prod_min
+        fleet_prod_ratio  = fleet_prod_min / fleet_total_min * 100 if fleet_total_min else float("nan")
+    else:
+        fleet_total_min = fleet_prod_min = fleet_idle_min = fleet_prod_ratio = float("nan")
 
-    # Helper lambdas
-    _sum   = lambda d, col: float("nan") if d.empty else d[col].sum()
-    _mean  = lambda d, col: float("nan") if d.empty else d[col].mean()
-
-    return {
-        # raw frames
+    kpis = {
+        # frames
         "df_today": df_today,
-        "df_yest": df_yest,
-        "df_7day": df_7day,
-        "df_30day": df_30day,
-        # headline day‑to‑day KPIs
-        "vol_today":  _sum(df_today,  "load_volume_m3"),
-        "vol_yest":   _sum(df_yest,   "load_volume_m3"),
-        "wait_today": _mean(df_today, "dur_waiting"),
-        "wait_yest":  _mean(df_yest,  "dur_waiting"),
-        "cycle_today": _mean(df_today, "cycle_time"),
-        "cycle_yest":  _mean(df_yest,  "cycle_time"),
+        # basic KPIs
         "loads_today": len(df_today),
-        "loads_yest":  len(df_yest),
-        "fuel_today":  _sum(df_today,  "fuel_used_L"),
-        "fuel_yest":   _sum(df_yest,   "fuel_used_L"),
-        "dist_today":  _sum(df_today,  "distance_km"),
-        "dist_yest":   _sum(df_yest,   "distance_km"),
-        # 7‑day averages (daily)
-        "avg_vol_7d":   grouped_7d["load_volume_m3"].sum().mean(),
-        "avg_wait_7d":  grouped_7d["dur_waiting"].mean().mean(),
-        "avg_cycle_7d": grouped_7d["cycle_time"].mean().mean(),
-        "avg_loads_7d": grouped_7d.size().mean(),
-        "avg_fuel_7d":  grouped_7d["fuel_used_L"].sum().mean(),
-        "avg_dist_7d":  grouped_7d["distance_km"].sum().mean(),
-        # 30‑day averages (daily)
-        "avg_vol_30d":   grouped_30d["load_volume_m3"].sum().mean(),
-        "avg_wait_30d":  grouped_30d["dur_waiting"].mean().mean(),
-        "avg_cycle_30d": grouped_30d["cycle_time"].mean().mean(),
-        "avg_loads_30d": grouped_30d.size().mean(),
-        "avg_fuel_30d":  grouped_30d["fuel_used_L"].sum().mean(),
-        "avg_dist_30d":  grouped_30d["distance_km"].sum().mean(),
-        "days_7d":  grouped_7d.ngroups,
-        "days_30d": grouped_30d.ngroups,
+        "cycle_today": df_today["cycle_time"].mean(),
+        "utilization_pct": utilization_pct,
+        "op_minutes": op_minutes,
+        # productivity fleet aggregates
+        "prod_total_min": fleet_total_min,
+        "prod_prod_min":  fleet_prod_min,
+        "prod_idle_min":  fleet_idle_min,
+        "prod_ratio":     fleet_prod_ratio,
     }
 
-# ----------------------------------------------------------------------------
-# 2.  Rule‑based prompt handler (fast answers, no GPT call)
-# ----------------------------------------------------------------------------
+    return kpis
+
+# -----------------------------------------------------------------------------
+# 2.  Rule‑based prompt handler (fast answers without GPT)
+# -----------------------------------------------------------------------------
 
 def handle_simple_prompt(prompt: str, kpis: dict) -> str | None:
-    """Return an answer string if we can satisfy the prompt locally, else None."""
-
     p = prompt.lower()
 
-    # ---------------------------------------------------------------------
-    # Quick compare today vs yesterday
-    # ---------------------------------------------------------------------
-    compare_map = {
-        "volume":  ("vol_today",  "vol_yest",  "m³"),
-        "wait":    ("wait_today", "wait_yest", "min"),
-        "wait time": ("wait_today", "wait_yest", "min"),
-        "cycle":   ("cycle_today","cycle_yest","min"),
-        "cycle time": ("cycle_today","cycle_yest","min"),
-        "fuel":    ("fuel_today", "fuel_yest", "L"),
-        "distance":("dist_today", "dist_yest", "km"),
-        "loads":   ("loads_today","loads_yest", ""),
-    }
-    if ("compare" in p or "yesterday" in p):
-        for kw, (today_key, yest_key, unit) in compare_map.items():
-            if kw in p:
-                today_val, yest_val = kpis[today_key], kpis[yest_key]
-                delta = today_val - yest_val
-                unit_str = f" {unit}" if unit else ""
-                return (f"Today’s {kw} is **{today_val:,.1f}{unit_str}**, vs **{yest_val:,.1f}{unit_str}** yesterday."
-                        f" Difference: **{delta:+.1f}{unit_str}**.")
+    # ---------------- Utilization (10‑h default or custom hours) ------------
+    if "utilization" in p:
+        custom_hours = re.search(r'(\d+(\.\d+)?)\s*(hour|hr|h)', p)
+        if custom_hours:
+            op_min = float(custom_hours.group(1)) * 60
+            cycle_min = kpis["df_today"]["cycle_time"].sum()
+            util = (cycle_min / op_min * 100) if op_min else float("nan")
+            return f"Estimated utilization for today is **{util:.1f}%**, based on a {custom_hours.group(1)}‑hour window."
+        return f"Estimated utilization for today is **{kpis['utilization_pct']:.1f}%** (10‑hour default window)."
 
-    # ---------------------------------------------------------------------
-    # Today‑only singles (e.g. "fuel today" / "volume today")
-    # ---------------------------------------------------------------------
-    singles_map = {
-        "volume":  ("vol_today", "m³"),
-        "wait":    ("wait_today", "min"),
-        "wait time": ("wait_today", "min"),
-        "cycle":   ("cycle_today", "min"),
-        "cycle time": ("cycle_today", "min"),
-        "fuel":    ("fuel_today", "L"),
-        "distance":("dist_today", "km"),
-        "loads":   ("loads_today", ""),
-    }
-    if "today" in p:
-        for kw, (key, unit) in singles_map.items():
-            if kw in p:
-                val = kpis[key]
-                unit_str = f" {unit}" if unit else ""
-                if kw == "loads":
-                    return f"There were **{int(val)}** loads delivered today."
-                return f"Today’s {kw} is **{val:,.1f}{unit_str}**."
+    # ---------------- Productivity ratio (productive vs idle) --------------
+    if any(kw in p for kw in ["productive", "idle", "productivity ratio", "truck productivity"]):
+        ratio = kpis["prod_ratio"]
+        prod_h = kpis["prod_prod_min"] / 60
+        idle_h = kpis["prod_idle_min"] / 60
+        return (f"Fleet‑wide today: **{ratio:.1f}% productive** (≈ {prod_h:,.1f} hr) vs **{idle_h:,.1f} hr idle**."
+                " Try asking: ‘Which truck had the most idle time?’ for details.")
 
-    # ---------------------------------------------------------------------
-    # Rolling averages – 7‑day / 30‑day
-    # ---------------------------------------------------------------------
-    avg_map = {
-        "volume":  ("avg_vol",  "m³"),
-        "wait":    ("avg_wait", "min"),
-        "wait time": ("avg_wait", "min"),
-        "cycle":   ("avg_cycle","min"),
-        "cycle time": ("avg_cycle","min"),
-        "fuel":    ("avg_fuel", "L"),
-        "distance":("avg_dist", "km"),
-        "loads":   ("avg_loads", ""),
-    }
-    for period_kw, period_suffix in [("7", "7d"), ("30", "30d")]:
-        if (period_kw in p and "average" in p):
-            for kw, (base_key, unit) in avg_map.items():
-                if kw in p:
-                    key = f"{base_key}_{period_suffix}"
-                    val = kpis[key]
-                    unit_str = f" {unit}" if unit else ""
-                    return f"Average {kw} over the last {period_kw} days is **{val:,.1f}{unit_str}**."
+    # ---------------- Additional quick replies (loads today, etc.) ----------
+    if "loads today" in p:
+        return f"There were **{kpis['loads_today']}** loads delivered today."
 
-    return None  # Fall back to GPT if nothing matched
+    return None  # fall back to GPT if not matched
