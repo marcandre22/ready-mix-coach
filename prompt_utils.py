@@ -1,13 +1,17 @@
-# prompt_utils.py – helper to build a consistent system prompt
-def build_system_prompt(GUIDELINES: dict, COACH_STYLE: dict) -> str:
-    persona = GUIDELINES.get("persona", "")
-    rules = "\n".join(f"- {r}" for r in GUIDELINES.get("rules", []))
-    voice = COACH_STYLE.get("voice", "direct, supportive, insightful")
-    closing = COACH_STYLE.get("closing", "Always end with a question or prompt to help the user go further.")
+# prompt_utils.py – system prompt builder (keeps style/instructions separate)
+
+def build_system_prompt(guidelines: dict, coach_style: dict) -> str:
+    persona = guidelines.get("persona", "")
+    rules = guidelines.get("rules", [])
+    style_voice = coach_style.get("voice", "")
+    style_avoid = ", ".join(coach_style.get("avoid", []))
+    closing = coach_style.get("closing", "")
+
     return (
         f"{persona}\n\n"
-        f"Voice: {voice}.\n\n"
-        f"Ground rules:\n{rules}\n\n"
-        f"Closing rule: {closing}\n"
-        f"Be precise, prefer concrete numbers from tools."
+        "Rules:\n- " + "\n- ".join(rules) + "\n\n"
+        "Tone:\n"
+        f"- Voice: {style_voice}\n"
+        f"- Avoid: {style_avoid}\n"
+        f"- Closing: {closing}\n"
     )
