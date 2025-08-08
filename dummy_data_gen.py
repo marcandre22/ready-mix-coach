@@ -1,4 +1,4 @@
-# dummy_data_gen.py – extended for full KPI coverage
+# dummy_data_gen.py – deterministic dummy data with seed
 import streamlit as st
 import pandas as pd
 import random
@@ -33,7 +33,8 @@ def _haversine(p, s):
     return R * c
 
 @st.cache_data
-def load_data(*, days_back: int = 7, n_jobs_per_day: int = 60) -> pd.DataFrame:
+def load_data(*, days_back: int = 7, n_jobs_per_day: int = 60, seed: int = 7) -> pd.DataFrame:
+    random.seed(seed)  # <— deterministic
     rows = []
     ticket_id = 10000
     base = datetime.now().replace(hour=6, minute=0, second=0, microsecond=0)
@@ -107,4 +108,6 @@ def load_data(*, days_back: int = 7, n_jobs_per_day: int = 60) -> pd.DataFrame:
             rows.append(row)
             ticket_id += 1
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["start_time"]).dt.date  # handy for filtering & tools
+    return df
