@@ -1,4 +1,4 @@
-# app.py – CDWARE Ready-Mix Coach (tool-calling + filters + coach note)
+# app.py – CDWARE Ready-Mix Coach (tool-calling + filters + coach note + many tools)
 import json
 import random
 import pandas as pd
@@ -12,7 +12,28 @@ from coach_core import get_kpis
 from instruction_set import GUIDELINES, SUGGESTED_PROMPTS
 from tone_style import COACH_STYLE
 from prompt_utils import build_system_prompt
-from tools import compute_volume, compare_utilization, wait_by_hour
+
+# NEW: large tool suite
+from tools import (
+    compute_volume,
+    compare_utilization,
+    wait_by_hour,
+    fuel_cost_today,
+    co2_from_fuel_today,
+    driver_efficiency_today,
+    top_wait_jobs_48h,
+    top_water_added_week,
+    cycle_by_plant,
+    distance_over_km,
+    success_rate_within_eta,
+    fuel_l_per_km_exceed_days,
+    rank_plants_by_cycle,
+    projects_exceed_target_m3_per_load,
+    wait_compare_today_vs_7day,
+    quick_wins_to_utilization,
+    jobs_cycle_time_over,
+    driver_shortest_wait_week,
+)
 
 # ----------------------------
 # OpenAI client (new SDK style)
@@ -78,16 +99,14 @@ kpis = get_kpis(df)
 # Daily coach note
 # ----------------
 def make_coach_note():
-    """Small briefing that uses tool outputs, summarized by the model."""
     try:
-        # Gather grounded facts via tools
-        facts = {}
-        facts["util_compare"] = compare_utilization(kpis, benchmark=85.0)
-        facts["wait_by_hour"] = wait_by_hour(kpis["df_today"])
-        facts["loads_today"] = int(kpis["loads_today"])
-        facts["utilization_pct"] = float(kpis["utilization_pct"])
-        facts["prod_ratio"] = float(kpis["prod_ratio"])
-
+        facts = {
+            "util_compare": compare_utilization(kpis, benchmark=85.0),
+            "wait_by_hour": wait_by_hour(kpis["df_today"]),
+            "loads_today": int(kpis["loads_today"]),
+            "utilization_pct": float(kpis["utilization_pct"]),
+            "prod_ratio": float(kpis["prod_ratio"]),
+        }
         sys = build_system_prompt(GUIDELINES, COACH_STYLE)
         msgs = [
             {"role": "system", "content": sys},
@@ -142,6 +161,143 @@ def log_debug(payload):
     if debug:
         st.session_state.debug_log.append(payload)
 
+# ---------------------------------
+# Tool specs (JSON schema for model)
+# ---------------------------------
+tool_specs = [
+    # Existing basics
+    {
+        "type": "function",
+        "function": {
+            "name": "compute_volume",
+            "description": "Get delivered volume (m3) for a period.",
+            "parameters": {"type": "object","properties": {"period": {"type": "string","enum": ["today","yesterday"]}}, "required": ["period"]}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compare_utilization",
+            "description": "Compare today utilization vs a benchmark.",
+            "parameters": {"type": "object","properties": {"benchmark": {"type": "number"}}, "required": []}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wait_by_hour",
+            "description": "Average wait minutes for each hour today.",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    # New tools
+    {
+        "type":"function","function":{
+            "name":"fuel_cost_today",
+            "description":"Estimate fuel cost for today’s deliveries at a given $/L.",
+            "parameters":{"type":"object","properties":{"price_per_L":{"type":"number","default":1.8}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"co2_from_fuel_today",
+            "description":"Calculate CO₂ emissions from fuel used today (kg).",
+            "parameters":{"type":"object","properties":{"kg_per_L":{"type":"number","default":2.68}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"driver_efficiency_today",
+            "description":"Rank drivers by m³/hr today (average).",
+            "parameters":{"type":"object","properties":{"top_n":{"type":"integer","default":3}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"top_wait_jobs_48h",
+            "description":"Top N jobs with the longest single-load waiting time in the last 48h.",
+            "parameters":{"type":"object","properties":{"n":{"type":"integer","default":3}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"top_water_added_week",
+            "description":"Drivers ranked by water added (L) over last 7 days.",
+            "parameters":{"type":"object","properties":{"n":{"type":"integer","default":3}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"cycle_by_plant",
+            "description":"Average cycle time by plant (today or week).",
+            "parameters":{"type":"object","properties":{"period":{"type":"string","enum":["today","week"],"default":"today"}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"distance_over_km",
+            "description":"List loads where distance_km exceeded a threshold in the last 7 days.",
+            "parameters":{"type":"object","properties":{"km":{"type":"number","default":40}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"success_rate_within_eta",
+            "description":"Delivery success rate within ±X minutes of ETA (today).",
+            "parameters":{"type":"object","properties":{"tolerance_min":{"type":"number","default":10}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"fuel_l_per_km_exceed_days",
+            "description":"Days where fleet fuel L/km exceeded a threshold over the last 7 days.",
+            "parameters":{"type":"object","properties":{"threshold":{"type":"number","default":0.55}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"rank_plants_by_cycle",
+            "description":"Rank plants by average cycle time over the last 7 days.",
+            "parameters":{"type":"object","properties":{}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"projects_exceed_target_m3_per_load",
+            "description":"Projects where avg m³ per load exceeded a target (last 7 days).",
+            "parameters":{"type":"object","properties":{"target":{"type":"number","default":7.6}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"wait_compare_today_vs_7day",
+            "description":"Compare today’s avg wait vs the 7-day average.",
+            "parameters":{"type":"object","properties":{}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"quick_wins_to_utilization",
+            "description":"Compute utilization gap vs target and surface hotspots to focus on.",
+            "parameters":{"type":"object","properties":{"target":{"type":"number","default":88}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"jobs_cycle_time_over",
+            "description":"Find loads where cycle time exceeded a threshold over the last 7 days.",
+            "parameters":{"type":"object","properties":{"minutes":{"type":"number","default":170},"n":{"type":"integer","default":10}}}
+        }
+    },
+    {
+        "type":"function","function":{
+            "name":"driver_shortest_wait_week",
+            "description":"Driver(s) with shortest average waiting time in last 7 days.",
+            "parameters":{"type":"object","properties":{"top_n":{"type":"integer","default":1}}}
+        }
+    },
+]
+
 # --------------------------
 # Chat & tool-calling engine
 # --------------------------
@@ -154,55 +310,13 @@ for m in st.session_state.history:
         st.markdown(m["text"])
 
 def tool_call_router(messages):
-    """
-    Ask the model; if it returns a tool call, execute it and ask for a final answer.
-    Returns final text.
-    """
     system_prompt = build_system_prompt(GUIDELINES, COACH_STYLE)
-
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "compute_volume",
-                "description": "Get delivered volume (m3) for a period.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "period": {"type": "string", "enum": ["today", "yesterday"]}
-                    },
-                    "required": ["period"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "compare_utilization",
-                "description": "Compare today utilization vs a benchmark.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"benchmark": {"type": "number"}},
-                    "required": []
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "wait_by_hour",
-                "description": "Average wait minutes for each hour today.",
-                "parameters": {"type": "object", "properties": {}}
-            }
-        },
-    ]
-
     msgs = [{"role": "system", "content": system_prompt}] + messages
 
     resp = client.chat.completions.create(
         model="gpt-5-chat",
         messages=msgs,
-        tools=tools,
+        tools=tool_specs,
         tool_choice="auto",
         temperature=0.2,
     )
@@ -210,20 +324,51 @@ def tool_call_router(messages):
     log_debug({"stage": "initial", "message": msg})
 
     if getattr(msg, "tool_calls", None):
-        # Execute just the first tool for simplicity; you can loop if you want multi-step
+        # handle only the first tool for simplicity
         call = msg.tool_calls[0]
         name = call.function.name
         args = json.loads(call.function.arguments or "{}")
 
-        # Run tool
+        # Execute tool by name -------------------------
         if name == "compute_volume":
             result = compute_volume(df, period=args.get("period", "today"))
         elif name == "compare_utilization":
             result = compare_utilization(kpis, float(args.get("benchmark", 85.0)))
         elif name == "wait_by_hour":
             result = wait_by_hour(kpis["df_today"])
+        elif name == "fuel_cost_today":
+            result = fuel_cost_today(kpis["df_today"], float(args.get("price_per_L", 1.8)))
+        elif name == "co2_from_fuel_today":
+            result = co2_from_fuel_today(kpis["df_today"], float(args.get("kg_per_L", 2.68)))
+        elif name == "driver_efficiency_today":
+            result = driver_efficiency_today(kpis["df_today"], int(args.get("top_n", 3)))
+        elif name == "top_wait_jobs_48h":
+            result = top_wait_jobs_48h(kpis["df_48h"], int(args.get("n", 3)))
+        elif name == "top_water_added_week":
+            result = top_water_added_week(kpis["df_week"], int(args.get("n", 3)))
+        elif name == "cycle_by_plant":
+            result = cycle_by_plant(kpis, args.get("period", "today"))
+        elif name == "distance_over_km":
+            result = distance_over_km(kpis["df_week"], float(args.get("km", 40)))
+        elif name == "success_rate_within_eta":
+            result = success_rate_within_eta(kpis["df_today"], float(args.get("tolerance_min", 10)))
+        elif name == "fuel_l_per_km_exceed_days":
+            result = fuel_l_per_km_exceed_days(kpis["df_week"], float(args.get("threshold", 0.55)))
+        elif name == "rank_plants_by_cycle":
+            result = rank_plants_by_cycle(kpis["df_week"])
+        elif name == "projects_exceed_target_m3_per_load":
+            result = projects_exceed_target_m3_per_load(kpis["df_week"], float(args.get("target", 7.6)))
+        elif name == "wait_compare_today_vs_7day":
+            result = wait_compare_today_vs_7day(kpis["df_today"], kpis["df_week"])
+        elif name == "quick_wins_to_utilization":
+            result = quick_wins_to_utilization(kpis, float(args.get("target", 88)))
+        elif name == "jobs_cycle_time_over":
+            result = jobs_cycle_time_over(kpis["df_week"], float(args.get("minutes", 170)), int(args.get("n", 10)))
+        elif name == "driver_shortest_wait_week":
+            result = driver_shortest_wait_week(kpis["df_week"], int(args.get("top_n", 1)))
         else:
             result = {"ok": False, "error": f"Unknown tool: {name}"}
+        # ---------------------------------------------
 
         log_debug({"stage": "tool_result", "tool": name, "result": result})
 
@@ -239,7 +384,7 @@ def tool_call_router(messages):
     else:
         return msg.content.strip()
 
-user_q = st.chat_input("Ask a question (e.g., 'Compare utilization to 85% benchmark')")
+user_q = st.chat_input("Ask a question (e.g., 'Which driver added the most water this week?')")
 if user_q:
     st.session_state.history.append({"role": "user", "text": user_q})
     with st.chat_message("user"):
@@ -253,12 +398,12 @@ if user_q:
         except Exception as e:
             st.error(f"There was an error generating a response. {e}")
 
-# -------------------
-# Suggested questions
-# -------------------
+# -------------
+# Suggested Qs
+# -------------
 st.markdown("#### Suggested questions:")
 cols = st.columns(2)
-for i, q in enumerate(SUGGESTED_PROMPTS[:10]):  # show first 10 to keep it compact
+for i, q in enumerate(SUGGESTED_PROMPTS[:12]):
     if cols[i % 2].button(q):
         st.session_state.history.append({"role": "user", "text": q})
         st.rerun()
